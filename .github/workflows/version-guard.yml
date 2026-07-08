@@ -1,0 +1,29 @@
+# version-guard — hermes plugin version-consistency guard.
+#
+# Hermes carries two hand-synced version strings (plugin.yaml + __init__.py) and,
+# unlike the crate/npm/PyPI repos, has no publish tooling to catch a mismatch or
+# a mistagged release. This gives it both:
+#   * the always-on plugin.yaml == __init__.py check (every push / PR), and
+#   * the release-time tag==version guard on `v*` tags (via $GITHUB_REF), the
+#     one the published-package repos already get for free.
+# It only reads two text files — no install, seconds to run.
+name: version-guard
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  version-guard:
+    name: version consistency
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check plugin.yaml == __init__.py (and tag == version on v* tags)
+        run: python3 scripts/check_version.py
