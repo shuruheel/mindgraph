@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import json
 
-from mindgraph import MindGraphError
-
 from hermes_mindgraph_plugin.dispatch import contract, handle_tool
 from hermes_mindgraph_plugin.governance import GateResult
 from hermes_mindgraph_plugin.memory_tool import MemoryRuntimeConfig
+from mindgraph import MindGraphError
 
 CONFIG = MemoryRuntimeConfig(server_version="1.0.0")
 

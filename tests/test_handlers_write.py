@@ -7,7 +7,6 @@ from __future__ import annotations
 import json
 
 import pytest
-
 from hermes_mindgraph_plugin.handlers_write import (
     handle_capture,
     handle_commit,

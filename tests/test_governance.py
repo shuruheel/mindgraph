@@ -6,7 +6,6 @@ import json
 
 import httpx
 import pytest
-
 from hermes_mindgraph_plugin.governance import GovernanceGate, governance_target, tool_mutability
 
 

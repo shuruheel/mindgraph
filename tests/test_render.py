@@ -7,7 +7,6 @@ import json
 import re
 
 import pytest
-
 from hermes_mindgraph_plugin.render import (
     render_context,
     render_jobs,

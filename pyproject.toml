@@ -15,5 +15,9 @@ dependencies = [
 line-length = 120
 target-version = "py311"
 
+[tool.ruff.lint]
+# Explicit, so a newer ruff's defaults do not change what CI enforces.
+select = ["E4", "E7", "E9", "F", "I", "B"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

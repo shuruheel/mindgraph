@@ -22,6 +22,6 @@ jobs:
       - name: Install the declared dependencies
         run: |
           python -c "import tomllib; print('\n'.join(tomllib.load(open('pyproject.toml','rb'))['project']['dependencies']))" > /tmp/requirements.txt
-          python -m pip install -r /tmp/requirements.txt pytest ruff
+          python -m pip install -r /tmp/requirements.txt pytest ruff==0.15.5
       - run: ruff check .
       - run: python -m pytest -q

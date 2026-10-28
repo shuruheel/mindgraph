@@ -7,7 +7,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from hermes_mindgraph_plugin import handlers_read as h
 
 RENDER_READY = (Path(__file__).resolve().parent.parent / "render.py").exists()

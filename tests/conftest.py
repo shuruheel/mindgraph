@@ -14,7 +14,6 @@ import os
 import sys
 import threading
 import types
-from abc import ABC
 from pathlib import Path
 from typing import Any, Callable
 
@@ -29,7 +28,7 @@ def _install_hermes_stubs() -> None:
     if "agent.memory_provider" in sys.modules:
         return
 
-    class MemoryProvider(ABC):
+    class MemoryProvider:  # structural stand-in; the real ABC lives in Hermes
         pre_compress_checkpoint_api_version = 1
 
     def spawn_context_thread(target, *, name, daemon=True, args=(), kwargs=None):

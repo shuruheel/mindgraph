@@ -4,16 +4,14 @@ from __future__ import annotations
 
 import json
 
-import pytest
-from mindgraph import MindGraphError
-
 import hermes_mindgraph_plugin as plugin
+import pytest
+from conftest import FakeClient
 from hermes_mindgraph_plugin import dispatch
 from hermes_mindgraph_plugin import provider as provider_mod
 from hermes_mindgraph_plugin.governance import GateResult
 from hermes_mindgraph_plugin.provider import MindGraphMemoryProvider, builtin_memory_custom_id, topic_query
-
-from conftest import FakeClient
+from mindgraph import MindGraphError
 
 
 class Ctx:
