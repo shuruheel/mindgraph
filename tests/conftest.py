@@ -1,132 +1,108 @@
-"""Test config — loads the flat-layout plugin under a stable import name.
+"""Test config: load the flat-layout plugin as a package and stub the Hermes surface.
 
-Hermes clones this plugin into ``~/.hermes/plugins/mindgraph/`` and loads the
-repo-root ``__init__.py`` directly — the repo root IS the package.
-The repo directory name contains hyphens, so it can't be imported via a normal
-``import`` statement. This conftest uses ``importlib.util`` to load the
-package under the name ``hermes_mindgraph_plugin`` so tests can ``import``
-it the same way regardless of where the repo lives on disk.
-
-It also injects a minimal stub of ``agent.memory_provider`` so the provider
-module imports cleanly outside a Hermes runtime.
+The repo root IS the plugin package (Hermes loads its ``__init__.py`` directly), and
+the directory name is not importable, so it is registered as
+``hermes_mindgraph_plugin``. ``agent.memory_provider`` and ``agent.secret_scope``
+are stubbed so the provider imports outside a Hermes runtime.
 """
 
 from __future__ import annotations
 
 import importlib.util
+import inspect
+import os
 import sys
+import threading
 import types
 from abc import ABC
 from pathlib import Path
+from typing import Any, Callable
+
+import pytest
+from mindgraph import MindGraph
+
+PKG = "hermes_mindgraph_plugin"
+REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
-# ---------------------------------------------------------------------------
-# Stub agent.memory_provider when Hermes isn't on the path
-# ---------------------------------------------------------------------------
-
-def _ensure_memory_provider_stub() -> None:
+def _install_hermes_stubs() -> None:
     if "agent.memory_provider" in sys.modules:
         return
 
-    class _StubMemoryProvider(ABC):
-        """Structural stand-in for the real MemoryProvider ABC."""
+    class MemoryProvider(ABC):
+        pre_compress_checkpoint_api_version = 1
 
-        @property
-        def name(self) -> str:
-            raise NotImplementedError
-
-        def is_available(self) -> bool:
-            raise NotImplementedError
-
-        def initialize(self, session_id: str, **kwargs) -> None:
-            pass
-
-        def system_prompt_block(self) -> str:
-            return ""
-
-        def prefetch(self, query: str, *, session_id: str = "") -> str:
-            return ""
-
-        def queue_prefetch(self, query: str, *, session_id: str = "") -> None:
-            pass
-
-        def sync_turn(self, user_content: str, assistant_content: str, *, session_id: str = "") -> None:
-            pass
-
-        def get_tool_schemas(self):
-            return []
-
-        def handle_tool_call(self, tool_name: str, args, **kwargs) -> str:
-            return "{}"
-
-        def shutdown(self) -> None:
-            pass
-
-        def on_turn_start(self, turn_number: int, message: str, **kwargs) -> None:
-            pass
-
-        def on_session_end(self, messages) -> None:
-            pass
-
-        def on_pre_compress(self, messages) -> str:
-            return ""
-
-        def on_delegation(self, task: str, result: str, *, child_session_id: str = "", **kwargs) -> None:
-            pass
-
-        def get_config_schema(self):
-            return []
-
-        def save_config(self, values, hermes_home) -> None:
-            pass
-
-        def on_memory_write(self, action: str, target: str, content: str) -> None:
-            pass
+    def spawn_context_thread(target, *, name, daemon=True, args=(), kwargs=None):
+        return threading.Thread(target=target, args=args, kwargs=kwargs, name=name, daemon=daemon)
 
     agent_pkg = types.ModuleType("agent")
     agent_pkg.__path__ = []
-    mp_mod = types.ModuleType("agent.memory_provider")
-    mp_mod.MemoryProvider = _StubMemoryProvider
+    provider_mod = types.ModuleType("agent.memory_provider")
+    provider_mod.MemoryProvider = MemoryProvider
+    provider_mod.spawn_context_thread = spawn_context_thread
+    secret_mod = types.ModuleType("agent.secret_scope")
+    secret_mod.get_secret = lambda name, default=None: os.environ.get(name, default)
     sys.modules.setdefault("agent", agent_pkg)
-    sys.modules["agent.memory_provider"] = mp_mod
+    sys.modules["agent.memory_provider"] = provider_mod
+    sys.modules["agent.secret_scope"] = secret_mod
 
 
-# ---------------------------------------------------------------------------
-# Load the flat-layout repo under the name ``hermes_mindgraph_plugin``
-# ---------------------------------------------------------------------------
-
-def _load_flat_plugin_as_package() -> None:
-    if "hermes_mindgraph_plugin" in sys.modules:
+def _load_plugin_package() -> None:
+    if PKG in sys.modules:
         return
-
-    repo_root = Path(__file__).resolve().parent.parent
-    init_path = repo_root / "__init__.py"
-    assert init_path.exists(), f"Expected plugin __init__.py at {init_path}"
-
-    # Pre-register submodules so relative imports in __init__.py / provider.py
-    # resolve correctly regardless of where the repo lives on disk.
-    pkg_name = "hermes_mindgraph_plugin"
     spec = importlib.util.spec_from_file_location(
-        pkg_name, str(init_path),
-        submodule_search_locations=[str(repo_root)],
+        PKG, str(REPO_ROOT / "__init__.py"), submodule_search_locations=[str(REPO_ROOT)]
     )
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[pkg_name] = mod
-
-    for sub in ("tools", "provider"):
-        sub_file = repo_root / f"{sub}.py"
-        if not sub_file.exists():
-            continue
-        full = f"{pkg_name}.{sub}"
-        if full in sys.modules:
-            continue
-        sub_spec = importlib.util.spec_from_file_location(full, str(sub_file))
-        sub_mod = importlib.util.module_from_spec(sub_spec)
-        sys.modules[full] = sub_mod
-        sub_spec.loader.exec_module(sub_mod)
-
-    spec.loader.exec_module(mod)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[PKG] = module
+    spec.loader.exec_module(module)
 
 
-_ensure_memory_provider_stub()
-_load_flat_plugin_as_package()
+_install_hermes_stubs()
+_load_plugin_package()
+
+
+class FakeClient:
+    """Records every SDK call; replies come from ``responses``.
+
+    Only methods the real ``MindGraph`` client defines exist, and every call is
+    bound against the real signature, so a renamed method or a wrong keyword
+    fails the test instead of passing silently. A response may be a value, an
+    exception instance (raised), or a callable that receives ``(*args, **kwargs)``.
+    Unconfigured methods return ``{}``.
+    """
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, tuple, dict]] = []
+        self.responses: dict[str, Any] = {}
+
+    def __getattr__(self, method: str) -> Callable[..., Any]:
+        real = getattr(MindGraph, method, None)
+        if method.startswith("__") or not callable(real):
+            raise AttributeError(method)
+        signature = inspect.signature(real)
+
+        def call(*args: Any, **kwargs: Any) -> Any:
+            signature.bind(self, *args, **kwargs)
+            self.calls.append((method, args, kwargs))
+            reply = self.responses.get(method, {})
+            if isinstance(reply, BaseException):
+                raise reply
+            return reply(*args, **kwargs) if callable(reply) else reply
+
+        return call
+
+    def called(self, method: str) -> list[tuple[tuple, dict]]:
+        return [(args, kwargs) for name, args, kwargs in self.calls if name == method]
+
+
+@pytest.fixture
+def fake_client() -> FakeClient:
+    return FakeClient()
+
+
+@pytest.fixture
+def runtime(fake_client):
+    from hermes_mindgraph_plugin.runtime import Runtime
+
+    return Runtime(api_key="mg_test", session_id="sess-1", turn_number=1, client=fake_client)

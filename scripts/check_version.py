@@ -2,12 +2,12 @@
 """
 check_version.py — version guard for the mindgraph-hermes plugin.
 
-Hermes carries TWO hand-synced version strings and (unlike the other repos) has
+Hermes carries THREE hand-synced version strings (plugin.yaml, pyproject.toml, __init__.py) and (unlike the other repos) has
 no published-package machinery to catch a mismatch, so drift is easy. This is
 the self-contained in-repo guard the ecosystem-wide
 `release-tools/check_ecosystem.py` documents but can't enforce per-repo:
 
-  * plugin.yaml `version:` == __init__.py `__version__`   (always)
+  * plugin.yaml `version:` == __init__.py `__version__` == pyproject.toml `version` (always)
   * on a `v*` tag push, the tag (with the leading `v` stripped) == that version
     (release-time tag==version guard, the one the crates.io / PyPI repos get
     for free from their publish tooling).
@@ -61,11 +61,17 @@ def main() -> int:
     init_v = re_version(ROOT / "__init__.py",
                         r'__version__\s*=\s*["\']([^"\']+)["\']')
 
+    pyproject_v = re_version(ROOT / "pyproject.toml",
+                             r'(?m)^version\s*=\s*["\']([^"\']+)["\']')
+
     print(bold(f"\nmindgraph-hermes version guard  ({ROOT})\n"))
 
     check(plugin_v is not None and init_v is not None and plugin_v == init_v,
           "plugin.yaml version == __init__.py __version__",
           f"plugin.yaml {plugin_v} vs __init__.py {init_v}")
+    check(pyproject_v == plugin_v,
+          "pyproject.toml version == plugin.yaml version",
+          f"pyproject.toml {pyproject_v} vs plugin.yaml {plugin_v}")
 
     # release-time tag==version guard (only when building off a v* tag).
     ref = os.environ.get("GITHUB_REF", "")

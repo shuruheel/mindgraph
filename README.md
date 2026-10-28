@@ -2,83 +2,78 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-MindGraph semantic graph memory for [Hermes Agent](https://github.com/NousResearch/hermes-agent), implemented as a [MemoryProvider](https://github.com/NousResearch/hermes-agent/blob/main/agent/memory_provider.py) plugin.
-
-Every conversation opens a MindGraph session, bakes your active goals and policies into the system prompt, prefetches topic-relevant graph context each turn, exposes 5 graph-memory tools to the model, and ingests the full transcript on session end for 5-layer extraction (Reality, Epistemic, Intent, Action, Memory).
+[MindGraph](https://mindgraph.cloud) typed knowledge-graph memory for [Hermes Agent](https://github.com/NousResearch/hermes-agent), as a `MemoryProvider` plugin. The tools are the general profile of the [`mindgraph-mcp`](https://github.com/shuruheel/mindgraph-mcp) server, so a Hermes agent and an MCP client see the same memory surface.
 
 ## Install
 
 ```bash
-hermes plugins install shuruheel/mindgraph   # prompts for MINDGRAPH_API_KEY
-hermes memory setup                          # pick "mindgraph" in the picker
+hermes plugins install mindgraph   # from the Hermes plugin catalog; prompts for MINDGRAPH_API_KEY
+hermes memory setup                # pick "mindgraph"
 ```
 
-`hermes plugins install` clones the repo to `~/.hermes/plugins/mindgraph/` and prompts for your `MINDGRAPH_API_KEY` (get one at [mindgraph.cloud](https://mindgraph.cloud)). `hermes memory setup` then opens an interactive picker — select this plugin to install `mindgraph-sdk` and write `memory.provider: mindgraph` to `~/.hermes/config.yaml`.
+Get an API key at [mindgraph.cloud](https://mindgraph.cloud). Hermes installs the Python dependencies from `pyproject.toml` and requires Hermes 0.22.0 or later.
 
-Optional overrides (not prompted — set manually in `~/.hermes/.env` if needed):
+Optional settings, read per profile from Hermes's secret scope (`.env`):
 
+| Variable | Default | Effect |
+|---|---|---|
+| `MINDGRAPH_BASE_URL` | `https://api.mindgraph.cloud` | API endpoint (self-hosted servers) |
+| `MINDGRAPH_AGENT_ID` | `hermes` | Provenance stamped on every write |
+| `MINDGRAPH_ORG_ID` | — | Org header for keys with access to several orgs |
+| `MINDGRAPH_GOVERNANCE` | on | `off` skips the per-call governance checkpoint |
+| `MINDGRAPH_AUTO_CAPTURE` | on | `off` stops automatic transcript ingestion |
+
+## What happens in a conversation
+
+| Hermes hook | MindGraph behaviour |
+|---|---|
+| `system_prompt_block` | Static memory instructions (orient → answer → preserve), identical to the MCP server's, so the prompt stays cacheable. |
+| `prefetch` | Bounded topic recall (`/retrieve/context`, 5 items, 4,000 characters) for the current message, plus the open-work brief on a conversation's first turn when there is open work. |
+| `sync_turn` | Buffers the completed turn. |
+| `on_pre_compress`, `on_session_end`, `on_session_switch`, buffer over 24k characters | Ingests the buffered turns as a session transcript (`/ingest/session`) attached to the conversation's MindGraph Session; each turn is sent once. |
+| `on_memory_write` | Mirrors Hermes's built-in memory into `/memory/remember` (and `/memory/forget` on replace or remove), keyed by content so replays upsert. |
+| `handle_tool_call` | Checks `/agent/governance`, then runs the tool. |
+
+Subagent, cron and flush contexts never write automatically. Each Hermes profile gets its own provider instance, client and session; nothing is shared at module level.
+
+## Tools
+
+| Tool | Actions |
+|---|---|
+| `mindgraph_memory` | `status`; `context` with mode `topic`, `continuity` or `resume` |
+| `mindgraph_capture` | entity, observation, source, snippet, concept, journal, lesson, skill |
+| `mindgraph_reason` | claim, question, open_question, hypothesis, theory, paradigm, anomaly, assumption |
+| `mindgraph_commit` | goal, project, milestone, open_decision, add_option, add_constraint, resolve_decision, get_open_decisions |
+| `mindgraph_plan` | tasks, plans, leases, iterations, executions, procedures, risk assessments |
+| `mindgraph_retrieve` | text, context, semantic, hybrid, structured lists, preferences, layer, recent, traversals, document_index |
+| `mindgraph_remember` | remember (upsert by `custom_id`), forget |
+| `mindgraph_series_query` | list_for_entity, latest, window, aggregate |
+| `mindgraph_ingest` | chunk, document, session, job_status |
+| `mindgraph_synthesize` | signals, run, job_status |
+| `mindgraph_ontology` | schemas, query, objects, proposals, link, extract |
+
+The MCP server's generated per-object-type ontology tools are not exposed (Hermes fixes a provider's tool list before the provider can fetch the ontology); `mindgraph_ontology` covers the same reads. Failed calls return `{"error", "code", "retriable", "status"}` from the server's typed error, never an empty result.
+
+## Data and network disclosure
+
+- Every tool call, recall and capture goes to the configured MindGraph API (`api.mindgraph.cloud` by default) under your `MINDGRAPH_API_KEY`.
+- With automatic capture on (the default), the user and assistant text of each completed turn is sent for extraction. Tool calls and tool output are not sent. Hermes redacts secrets before providers see the text.
+- Each tool call first sends its name, action and target node uids to `/agent/governance`.
+- No telemetry, background processes or credentials stored outside Hermes.
+
+## Upgrading from 0.x
+
+1.0.0 replaces the five 0.x tools with the mindgraph-mcp surface. `mindgraph_remember` now means `remember`/`forget`. Claims moved to `mindgraph_reason`, entities and notes to `mindgraph_capture`, and goals, decisions and plans to `mindgraph_commit` and `mindgraph_plan`. Live graph state is no longer baked into the system prompt; it arrives through per-message recall.
+
+## Development
+
+```bash
+python3 -m pytest                                  # needs mindgraph-sdk importable
+node scripts/sync_from_mcp.mjs ../mindgraph-mcp    # regenerate mcp_contract.json
+python3 scripts/check_version.py                   # plugin.yaml == pyproject.toml == __init__.py
 ```
-MINDGRAPH_BASE_URL=https://api.mindgraph.cloud   # override for self-hosted
-MINDGRAPH_AGENT_ID=hermes                         # provenance tag on writes
-```
 
-Only one external memory provider is active at a time — setup will swap out any previously configured provider.
-
-## What gets wired up
-
-| MemoryProvider method | What it does |
-|-----------------------|--------------|
-| `initialize(session_id)` | Opens a MindGraph `Session` node (`hermes-<session_id[:8]>`). Idempotent — safe for per-message gateway restarts. |
-| `system_prompt_block()` | Injects the behavioral contract + current graph state (active goals, policies, open questions, open decisions, weak claims) into the cached system prompt. |
-| `queue_prefetch(query)` | Fires hybrid FTS + semantic retrieval in a background thread for the *next* turn. |
-| `prefetch(query)` | Returns the cached prefetch result as an ephemeral context block. |
-| `get_tool_schemas()` | Exposes 5 tools to the model (see below). |
-| `handle_tool_call(...)` | Dispatches tool calls to the MindGraph SDK. |
-| `on_session_end(messages)` | Closes the Session node and ingests the full transcript for 5-layer extraction. |
-| `shutdown()` | Drains the prefetch thread and closes any still-open session. |
-
-Subagent and cron contexts skip session open/close (the plugin checks `agent_context` in `initialize()` kwargs) so internal orchestration doesn't pollute the user-facing graph.
-
-## The 5 tools
-
-| Tool | Purpose |
-|------|---------|
-| `mindgraph_remember` | Store knowledge — entities, observations, claims, preferences, notes |
-| `mindgraph_retrieve` | Query the graph — hybrid FTS + semantic, structured queries, traversal |
-| `mindgraph_commit` | Track agentic state — goals, decisions, plans, tasks, risks, questions |
-| `mindgraph_ingest` | Bulk content ingestion (articles, transcripts, code) |
-| `mindgraph_synthesize` | Project-scoped cross-document synthesis — mine signals, generate Article nodes |
-
-See [`tools.py`](tools.py) for action tables and parameter details; the behavioral contract the agent sees is in [`provider.py`](provider.py).
-
-## Architecture
-
-MindGraph's 5-layer cognitive architecture:
-
-- **Reality** — entities, observations, facts
-- **Epistemic** — claims, evidence, questions, hypotheses, concepts
-- **Intent** — goals, decisions, projects, milestones
-- **Action** — risks, affordances, capabilities
-- **Agent** — plans, tasks, execution tracking, governance policies
-
-The behavioral contract injected into the system prompt teaches the agent when to route knowledge into which layer, with anti-patterns to avoid (bare entity nodes, session-memory drafting, content-derived commits, confidence inflation).
-
-## Requirements
-
-- Hermes Agent with the MemoryProvider interface (`agent/memory_provider.py`) — upstream `NousResearch/hermes-agent` as of the `plugins/memory/` refactor
-- Python ≥ 3.10
-- A MindGraph API key
-
-## Repo layout
-
-```
-mindgraph/
-├── __init__.py       # register(ctx) — hands a MindGraphMemoryProvider to Hermes
-├── provider.py       # MindGraphMemoryProvider(MemoryProvider)
-├── tools.py          # SDK glue: handlers, schemas, session helpers
-├── plugin.yaml       # Hermes manifest (pip_dependencies, requires_env)
-└── after-install.md  # Rendered by Hermes after install
-```
+`mcp_contract.json` is generated; edit the MCP server and re-sync instead.
 
 ## License
 

@@ -6,24 +6,10 @@ Activate it as your memory provider:
 hermes memory setup
 ```
 
-That opens an interactive picker — select **mindgraph**. Setup will:
+Pick **mindgraph**. If you have not set `MINDGRAPH_API_KEY` yet (get one at https://mindgraph.cloud), setup prompts for it.
 
-1. Install `mindgraph-sdk` into the Hermes environment.
-2. Write `memory.provider: mindgraph` to `~/.hermes/config.yaml`.
+From the next conversation, Hermes recalls relevant MindGraph context for each message, ingests completed turns as a session transcript, mirrors its built-in memory into MindGraph, and gives the model the mindgraph-mcp tools (`mindgraph_memory`, `mindgraph_capture`, `mindgraph_reason`, `mindgraph_commit`, `mindgraph_plan`, `mindgraph_retrieve`, `mindgraph_remember`, …).
 
-If you haven't already set your `MINDGRAPH_API_KEY` (get one at https://mindgraph.cloud), the plugin install step prompted for it. You can also add these optional overrides to `~/.hermes/.env`:
+Upgrading from 0.x: the tool names and actions changed in 1.0.0. See the README's "Upgrading from 0.x".
 
-```
-MINDGRAPH_BASE_URL=https://api.mindgraph.cloud   # override for self-hosted
-MINDGRAPH_AGENT_ID=hermes                         # provenance tag on writes
-```
-
-Next conversation, Hermes will:
-
-- Open a MindGraph session node on the first turn.
-- Bake your active goals, policies, open questions, and open decisions into the system prompt.
-- Prefetch topic-relevant graph context each turn.
-- Expose 5 tools to the model: `mindgraph_remember`, `mindgraph_retrieve`, `mindgraph_commit`, `mindgraph_ingest`, `mindgraph_synthesize`.
-- Ingest the full transcript on session end for 5-layer extraction (Reality, Epistemic, Intent, Action, Memory).
-
-Docs: https://github.com/shuruheel/mindgraph
+Docs: https://github.com/shuruheel/mindgraph#readme
