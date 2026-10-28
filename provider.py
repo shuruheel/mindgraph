@@ -1,195 +1,131 @@
-"""MindGraphMemoryProvider — MemoryProvider adapter for Hermes Agent.
+"""MindGraphMemoryProvider: the Hermes ``MemoryProvider`` lifecycle around the
+mindgraph-mcp tool surface.
 
-Implements the MemoryProvider ABC defined in ``agent/memory_provider.py`` by
-delegating to the existing MindGraph integration code in ``tools.py``.
+- ``initialize`` binds a ``Runtime`` (client, identity, session) to this instance.
+- ``system_prompt_block`` is static: the MCP server's memory instructions.
+- ``prefetch`` recalls bounded topic context for the current message, plus the
+  open-work brief on a conversation's first turn.
+- ``sync_turn`` buffers completed turns; the buffer is ingested as a session
+  transcript before compression, at session end or switch, and whenever it
+  grows past ``FLUSH_CHARS``, so nothing is sent twice.
+- ``on_memory_write`` mirrors Hermes's built-in memory into ``/memory/remember``.
+- Tool calls route through ``dispatch.handle_tool`` behind the governance gate.
 
-Lifecycle mapping:
-
-    initialize(session_id)       → auto_open_session(label="hermes-<id>")
-    system_prompt_block()        → retrieve_session_context() + behavioral contract
-    queue_prefetch(query)        → background proactive_graph_retrieve()
-    prefetch(query)              → return cached prefetch result
-    sync_turn(user, assistant)   → buffer turn for on_session_end ingestion
-    get_tool_schemas()           → 5 MindGraph tool schemas
-    handle_tool_call(name, args) → dispatch to mindgraph_* handlers
-    on_session_end(messages)     → auto_close_session(..., transcript=messages)
-    shutdown()                   → flush + auto_close_session()
-    get_config_schema()          → fields for ``hermes memory setup``
-
-The heavy lifting (SDK calls, dedup, retrieval formatting, metrics) lives in
-``tools.py`` — this file is a thin adapter and stays that way.
+Automatic writes run only for the ``primary`` agent context.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import re
 import threading
-from typing import Any, Dict, List
+from typing import Any, Optional
 
-try:
-    from agent.memory_provider import MemoryProvider
-except ImportError:  # pragma: no cover — only hit outside a Hermes runtime
-    # Allows imports during local tooling (mypy, partial pytest runs) without
-    # Hermes on the path. Hermes will always provide the real base class when
-    # it loads this plugin.
-    from abc import ABC
+from agent.memory_provider import MemoryProvider
+from agent.secret_scope import get_secret
 
-    class MemoryProvider(ABC):  # type: ignore[no-redef]
-        pass
+from . import __version__
+from .dispatch import contract, handle_tool, static_tool_schemas
+from .governance import GovernanceGate
+from .memory_tool import MemoryRuntimeConfig, handle_memory_tool
+from .render import render_resume_context
+from .results import is_error
+from .runtime import DEFAULT_AGENT_ID, DEFAULT_BASE_URL, HARNESS, Runtime
 
-from . import tools as _tools
+try:  # RecallStatus drives the "🧠 MindGraph — recalled N memories" line on newer Hermes.
+    from agent.memory_provider import RecallStatus
+except ImportError:  # pragma: no cover - older Hermes
+    RecallStatus = None  # type: ignore[assignment,misc]
 
 logger = logging.getLogger(__name__)
 
-
-# ---------------------------------------------------------------------------
-# Behavioral contract header — injected into system_prompt_block()
-# ---------------------------------------------------------------------------
-
-_SYSTEM_PROMPT_HEADER = (
-    "# MindGraph — Semantic Graph Memory\n\n"
-    "You have a persistent semantic graph that stores structured knowledge "
-    "across sessions. MindGraph is not a tool you use when asked — it is how "
-    "you think. Every conversation produces knowledge. Your job is to route "
-    "that knowledge to the right place in the graph so your future selves "
-    "can act on it.\n\n"
-    "Tools: **mindgraph_remember** (store knowledge), **mindgraph_retrieve** "
-    "(query knowledge), **mindgraph_commit** (track goals/decisions/plans/"
-    "risks/questions), **mindgraph_ingest** (bulk content), "
-    "**mindgraph_synthesize** (project-scoped cross-document synthesis).\n\n"
-    "## Persist triggers — store without being asked\n"
-    "- **Person discussed substantively** → remember(entity, person) + at "
-    "least one observation. A Person node without observations is a failure "
-    "state.\n"
-    "- **Organization mentioned with context** → remember(entity, organization) "
-    "+ observation.\n"
-    "- **User states a preference or corrects you** → remember(preference).\n"
-    "- **Analytical conclusion reached** → remember(claim) with evidence and "
-    "calibrated confidence. If you formed a view, the graph needs it.\n"
-    "- **User expresses intent** → commit(goal/project/milestone). User's own "
-    "intent only — never commit content-derived goals.\n"
-    "- **Decision point identified** → commit(open_decision) + add options.\n"
-    "- **Risk or opportunity surfaced** → commit(assess_risk/add_affordance).\n"
-    "- **Open question worth tracking** → commit(question).\n\n"
-    "## Retrieve before acting\n"
-    "Before drafting communication about a person, making recommendations, "
-    "or responding to 'remember when…' — call mindgraph_retrieve first. "
-    "Draft from retrieved context, not session memory. Session memory dies; "
-    "the graph persists.\n\n"
-    "## Judgment\n"
-    "- Entity nodes = stable identity. Observations = everything you learn "
-    "ABOUT them. Use descriptive keywords in observation labels for "
-    "findability.\n"
-    "- Claims should be falsifiable. Confidence 0.7 is a good default; "
-    "don't inflate without strong evidence.\n"
-    "- Topic-relevant context is auto-injected each turn — use retrieve for "
-    "deeper or specific queries."
+FLUSH_CHARS = 24_000
+MAX_PENDING_CHARS = 200_000
+PREFETCH_MAX_CHARS = 4_000
+PREFETCH_LIMIT = 5
+MIN_PREFETCH_CHARS = 12
+_STOPWORDS = frozenset(
+    "a an and are as at be but by can could did do does for from had has have how i if in into is it its "
+    "me my of on or our please should so that the their them then there these they this to us was we were "
+    "what when where which who why will with would you your about just also any some tell know want need "
+    "let lets like get got make".split()
 )
+_WORD = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.\-/#+]*")
+
+_HERMES_NOTES = """
+## In Hermes
+
+- Relevant MindGraph context is recalled automatically for each message and appears in the turn as "MindGraph context". Call `mindgraph_memory` only when that recall is insufficient.
+- Completed turns are ingested into MindGraph as a session transcript, so do not re-store what was simply said; use the typed write tools for decisions, corrections, lessons and facts that need structure or confidence.
+- Writes from Hermes's built-in memory tool are mirrored into MindGraph automatically."""
 
 
-# ---------------------------------------------------------------------------
-# Tool dispatch
-# ---------------------------------------------------------------------------
-
-def _dispatch_tool_call(tool_name: str, args: Dict[str, Any]) -> str:
-    """Route a tool call to the right mindgraph_* handler. Returns JSON string."""
-    if tool_name == "mindgraph_remember":
-        return _tools.mindgraph_remember(
-            label=args.get("label", ""),
-            action=args.get("action", "note"),
-            entity_type=args.get("entity_type", "concept"),
-            properties=args.get("properties"),
-            entity_uid=args.get("entity_uid", ""),
-            evidence=args.get("evidence", ""),
-            warrant=args.get("warrant", ""),
-            confidence=args.get("confidence", 0.7),
-        )
-    if tool_name == "mindgraph_retrieve":
-        return _tools.mindgraph_retrieve(
-            query=args.get("query", ""),
-            mode=args.get("mode", "context"),
-            limit=args.get("limit", 27),
-            include_chunks=args.get("include_chunks", False),
-            include_graph=args.get("include_graph", True),
-            node_type=args.get("node_type", ""),
-        )
-    if tool_name == "mindgraph_commit":
-        return _tools.mindgraph_commit(
-            action=args.get("action", "goal"),
-            label=args.get("label", ""),
-            uid=args.get("uid", ""),
-            status=args.get("status", ""),
-            description=args.get("description", ""),
-            summary=args.get("summary", ""),
-            option_label=args.get("option_label", ""),
-            chosen_option_uid=args.get("chosen_option_uid", ""),
-            plan_uid=args.get("plan_uid", ""),
-            task_uid=args.get("task_uid", ""),
-            execution_uid=args.get("execution_uid", ""),
-        )
-    if tool_name == "mindgraph_ingest":
-        return _tools.mindgraph_ingest(
-            content=args.get("content", ""),
-            source=args.get("source", ""),
-            content_type=args.get("content_type", "text"),
-        )
-    if tool_name == "mindgraph_synthesize":
-        return _tools.mindgraph_synthesize(
-            action=args.get("action", "signals"),
-            project_uid=args.get("project_uid", ""),
-            signals=args.get("signals", ""),
-            target_types=args.get("target_types", ""),
-            job_id=args.get("job_id", ""),
-        )
-    return json.dumps({"success": False, "error": f"Unknown tool: {tool_name}"})
+def topic_query(message: str, max_terms: int = 8) -> str:
+    """Discriminating keywords for BM25 topic recall: a full sentence dilutes the
+    query with words every node shares."""
+    seen: dict[str, None] = {}
+    for word in _WORD.findall(message[:600]):
+        key = word.lower().strip(".-/")
+        if len(key) < 2 or key in _STOPWORDS or key in seen:
+            continue
+        seen[key] = None
+        if len(seen) >= max_terms:
+            break
+    return " ".join(seen)
 
 
-# ---------------------------------------------------------------------------
-# MindGraphMemoryProvider
-# ---------------------------------------------------------------------------
+def builtin_memory_custom_id(target: str, content: str) -> str:
+    digest = hashlib.sha256(content.strip().encode()).hexdigest()[:32]
+    return f"hermes:{target}:{digest}"
+
+
+def _render_turn(turn: dict[str, str]) -> str:
+    parts = []
+    if turn["user"]:
+        parts.append(f"User: {turn['user']}")
+    if turn["assistant"]:
+        parts.append(f"Assistant: {turn['assistant']}")
+    return "\n\n".join(parts)
+
 
 class MindGraphMemoryProvider(MemoryProvider):
-    """MindGraph semantic graph memory for Hermes Agent.
+    """MindGraph semantic graph memory for Hermes Agent."""
 
-    Provides:
-      - Session lifecycle: auto-open on first turn, auto-close + transcript
-        ingestion on session end.
-      - System prompt context: goals, policies, open questions, decisions,
-        weak claims (baked in once per system prompt build).
-      - Per-turn prefetch: hybrid FTS + semantic retrieval fired in a
-        background thread at turn-end, consumed at next turn-start.
-      - 5 tools: mindgraph_remember, _retrieve, _commit, _ingest, _synthesize.
-    """
+    def __init__(self) -> None:
+        self._rt: Optional[Runtime] = None
+        self._gate: Optional[GovernanceGate] = None
+        self._memory_config: Optional[MemoryRuntimeConfig] = None
+        self._model: str = ""
+        self._auto_capture = True
+        self._briefed_sessions: set[str] = set()
+        self._recall_count: Optional[int] = None
+        self._recall_generation = 0
+        # sync_turn (manager worker) and session switch/end/shutdown (caller
+        # thread) both touch the pending buffer and the session bindings.
+        self._lock = threading.Lock()
+        self._flush_lock = threading.Lock()
+        self._pending: list[dict[str, str]] = []
+        # Hermes conversation id -> open MindGraph Session uid.
+        self._mg_sessions: dict[str, str] = {}
 
-    def __init__(self):
-        self._session_id: str = ""
-        self._prefetch_result: str = ""
-        self._prefetch_lock = threading.Lock()
-        self._prefetch_thread: threading.Thread | None = None
-        # Hermes-provided metadata from initialize() kwargs.
-        self._user_id: str = ""
-        self._agent_context: str = "primary"
-
-    # ── Identity ───────────────────────────────────────────────────────────
+    # ── Identity and setup ─────────────────────────────────────────────────
 
     @property
     def name(self) -> str:
         return "mindgraph"
 
     def is_available(self) -> bool:
-        """True when MINDGRAPH_API_KEY is set and the SDK is importable."""
-        if not _tools.check_requirements():
-            return False
-        try:
-            import mindgraph  # noqa: F401
-        except ImportError:
-            return False
-        return True
+        # Key presence only (no network, no import probe): Hermes installs the SDK
+        # from pyproject.toml before activation.
+        return bool(get_secret("MINDGRAPH_API_KEY", ""))
 
-    # ── Config schema (drives `hermes memory setup`) ───────────────────────
+    def unavailable_reason(self) -> str:
+        return "MINDGRAPH_API_KEY is not set; run `hermes memory setup` and choose mindgraph."
 
-    def get_config_schema(self) -> List[Dict[str, Any]]:
+    def get_config_schema(self) -> list[dict[str, Any]]:
+        # Every field carries env_var, so Hermes stores them in .env and save_config stays a no-op.
         return [
             {
                 "key": "api_key",
@@ -202,13 +138,13 @@ class MindGraphMemoryProvider(MemoryProvider):
             {
                 "key": "base_url",
                 "description": "API endpoint (override for self-hosted deployments)",
-                "default": "https://api.mindgraph.cloud",
+                "default": DEFAULT_BASE_URL,
                 "env_var": "MINDGRAPH_BASE_URL",
             },
             {
                 "key": "agent_id",
-                "description": "Agent identifier stamped onto every write for provenance",
-                "default": "hermes",
+                "description": "Agent identifier stamped on every write for provenance",
+                "default": DEFAULT_AGENT_ID,
                 "env_var": "MINDGRAPH_AGENT_ID",
             },
         ]
@@ -216,141 +152,318 @@ class MindGraphMemoryProvider(MemoryProvider):
     # ── Lifecycle ──────────────────────────────────────────────────────────
 
     def initialize(self, session_id: str, **kwargs: Any) -> None:
-        """Open a MindGraph session for this conversation.
-
-        ``auto_open_session`` is idempotent via ``_active_session_uid`` — safe
-        to call on every AIAgent init, including per-message gateway restarts.
-        """
-        self._session_id = session_id or ""
-        self._user_id = str(kwargs.get("user_id") or "")
-        self._agent_context = str(kwargs.get("agent_context") or "primary")
-
-        # Skip session open for non-primary agent contexts (subagents, cron)
-        # to avoid polluting the graph with internal orchestration sessions.
-        if self._agent_context != "primary":
-            return
-
-        label = f"hermes-{session_id[:8]}" if session_id else "hermes-session"
-        try:
-            _tools.auto_open_session(label=label)
-        except Exception as e:
-            logger.debug("MindGraph session open failed (non-fatal): %s", e)
+        base_url = (get_secret("MINDGRAPH_BASE_URL", "") or "").strip() or DEFAULT_BASE_URL
+        agent_id = (get_secret("MINDGRAPH_AGENT_ID", "") or "").strip() or DEFAULT_AGENT_ID
+        api_key = get_secret("MINDGRAPH_API_KEY", "") or ""
+        org_id = (get_secret("MINDGRAPH_ORG_ID", "") or "").strip() or None
+        self._rt = Runtime(
+            api_key=api_key,
+            base_url=base_url,
+            agent_id=agent_id,
+            org_id=org_id,
+            session_id=session_id or "",
+            platform=str(kwargs.get("platform") or ""),
+            agent_context=str(kwargs.get("agent_context") or "primary"),
+        )
+        self._gate = GovernanceGate(
+            base_url=base_url,
+            api_key=api_key,
+            agent_id=agent_id,
+            org_id=org_id,
+            disabled=(get_secret("MINDGRAPH_GOVERNANCE", "") or "").strip().lower() == "off",
+        )
+        self._auto_capture = (get_secret("MINDGRAPH_AUTO_CAPTURE", "") or "").strip().lower() not in (
+            "0",
+            "false",
+            "off",
+        )
+        # mindgraph_memory status must describe what this provider actually does.
+        self._memory_config = MemoryRuntimeConfig(
+            server_version=__version__,
+            base_url=base_url,
+            org_id=org_id,
+            agent_id=agent_id,
+            automatic_capture=self._auto_capture and self._rt.write_enabled,
+            automatic_delivery=True,
+        )
 
     def system_prompt_block(self) -> str:
-        """Behavioral contract + current graph state (goals, policies, etc).
+        if self._rt is None:
+            return ""
+        return f"# MindGraph memory\n\n{contract()['instructions']}\n{_HERMES_NOTES}"
 
-        The contract is static; the current context (active goals, open
-        decisions, weak claims) is pulled live from the graph so the
-        system prompt reflects the user's current agenda.
-        """
-        parts = [_SYSTEM_PROMPT_HEADER]
-        try:
-            ctx = _tools.retrieve_session_context()
-            if ctx:
-                # retrieve_session_context returns its own markdown header +
-                # context block. We strip the duplicate preamble and keep
-                # only the "## Current Context" section.
-                marker = "## Current Context"
-                if marker in ctx:
-                    parts.append("## Current Context\n\n" + ctx.split(marker, 1)[1].lstrip())
-                else:
-                    parts.append(ctx)
-        except Exception as e:
-            logger.debug("MindGraph session context retrieval failed: %s", e)
-        return "\n\n".join(parts)
+    def on_turn_start(self, turn_number: int, message: str, **kwargs: Any) -> None:
+        if self._rt is not None:
+            self._rt.turn_number = max(int(turn_number or 0), 0)
+        if kwargs.get("model"):
+            self._model = str(kwargs["model"])
 
-    # ── Prefetch (background per-turn retrieval) ───────────────────────────
+    # ── Recall ─────────────────────────────────────────────────────────────
 
     def prefetch(self, query: str, *, session_id: str = "") -> str:
-        """Return cached result from the previous queue_prefetch() call.
+        """Recall for the current message.
 
-        Wait briefly for an in-flight prefetch so we don't miss context on
-        the first turn (when no prior queue_prefetch has fired yet).
+        Hermes runs this on a thread bounded by its prefetch timeout. A call that
+        outlives that timeout must not overwrite a later turn's recall status, so
+        each call takes a generation and only the latest one may publish.
         """
-        if self._prefetch_thread and self._prefetch_thread.is_alive():
-            self._prefetch_thread.join(timeout=3.0)
-        with self._prefetch_lock:
-            result = self._prefetch_result
-            self._prefetch_result = ""
-        return result or ""
+        with self._lock:
+            self._recall_generation += 1
+            generation = self._recall_generation
+            self._recall_count = None
+        rt = self._rt
+        if rt is None or self._memory_config is None:
+            return ""
+        sections: list[str] = []
+        count = 0
+        brief = self._first_turn_brief(session_id or rt.session_id)
+        if brief:
+            sections.append(brief)
+            count += 1
+        terms = topic_query(query or "") if len((query or "").strip()) >= MIN_PREFETCH_CHARS else ""
+        if terms:
+            result = handle_memory_tool(
+                rt,
+                {
+                    "action": "context",
+                    "mode": "topic",
+                    "query": terms,
+                    "limit": PREFETCH_LIMIT,
+                    "max_output_chars": PREFETCH_MAX_CHARS,
+                    "agent_id": rt.agent_id,
+                },
+                self._memory_config,
+            )
+            rendered, returned = _rendered_context(result)
+            if rendered:
+                sections.append(rendered)
+                count += returned
+        if not sections:
+            return ""
+        with self._lock:
+            if generation == self._recall_generation:
+                self._recall_count = count
+        return "## MindGraph context (recalled for this message)\n\n" + "\n\n".join(sections)
 
-    def queue_prefetch(self, query: str, *, session_id: str = "") -> None:
-        """Fire proactive retrieval in a background thread for the next turn."""
-        if not query or not query.strip():
-            return
+    def _first_turn_brief(self, session_id: str) -> str:
+        """Open work, once per conversation, and only when there is some. A failed
+        lookup is retried on the next message."""
+        rt = self._rt
+        if rt is None or session_id in self._briefed_sessions:
+            return ""
+        try:
+            brief = rt.client.plan(action="resume_work", agent_id=rt.agent_id, limit=1)
+        except Exception as exc:
+            logger.debug("MindGraph resume brief failed (non-fatal): %s", exc)
+            return ""
+        self._briefed_sessions.add(session_id)
+        if not isinstance(brief, dict) or not brief.get("task"):
+            return ""
+        return render_resume_context(brief) or ""
 
-        def _run():
-            try:
-                ctx = _tools.proactive_graph_retrieve(query)
-            except Exception as e:
-                logger.debug("MindGraph prefetch failed (non-fatal): %s", e)
-                return
-            if ctx:
-                with self._prefetch_lock:
-                    self._prefetch_result = ctx
+    def recall_status(self):
+        if RecallStatus is None or self._recall_count is None:
+            return None
+        return RecallStatus(provider_label="MindGraph", count=self._recall_count)
 
-        # Wait for any still-running prefetch so threads don't accumulate.
-        if self._prefetch_thread and self._prefetch_thread.is_alive():
-            self._prefetch_thread.join(timeout=2.0)
-        self._prefetch_thread = threading.Thread(
-            target=_run, daemon=True, name="mindgraph-prefetch"
+    # ── Capture ────────────────────────────────────────────────────────────
+    #
+    # Locking: ``_lock`` guards the buffer and the session bindings and is never
+    # held across network I/O, so caller-thread hooks (switch, compression) never
+    # wait on a slow ingest. ``_flush_lock`` serializes flushes so batches reach
+    # the server in turn order.
+
+    def _can_write(self) -> bool:
+        return self._rt is not None and self._rt.write_enabled
+
+    def _ensure_session(self, harness_session_id: str) -> Optional[str]:
+        """The MindGraph Session for one Hermes conversation; open is an identity
+        upsert, so reopening after a lost uid is harmless."""
+        rt = self._rt
+        with self._lock:
+            uid = self._mg_sessions.get(harness_session_id)
+        if uid:
+            return uid
+        opened = rt.client.session(
+            action="open",
+            label=f"Hermes {harness_session_id}",
+            harness=HARNESS,
+            harness_session_id=harness_session_id,
+            **({"model": self._model} if self._model else {}),
+            agent_id=rt.agent_id,
         )
-        self._prefetch_thread.start()
+        uid = opened.get("uid") if isinstance(opened, dict) else None
+        if not (isinstance(uid, str) and uid):
+            return None
+        with self._lock:
+            self._mg_sessions[harness_session_id] = uid
+        return uid
 
-    # ── Turn sync ──────────────────────────────────────────────────────────
+    def sync_turn(self, user_content: str, assistant_content: str, *, session_id: str = "", **kwargs: Any) -> None:
+        """Runs on Hermes's background worker, so the flush may block."""
+        if not self._can_write() or not self._auto_capture:
+            return
+        user, assistant = (user_content or "").strip(), (assistant_content or "").strip()
+        if not (user or assistant):
+            return
+        with self._lock:
+            # Tag with the turn's own conversation: a switch may already have
+            # rebound the runtime by the time this queued call runs.
+            self._pending.append({"session": session_id or self._rt.session_id, "user": user, "assistant": assistant})
+            size = sum(len(t["user"]) + len(t["assistant"]) for t in self._pending)
+        if size >= FLUSH_CHARS:
+            self._flush("size")
 
-    def sync_turn(self, user_content: str, assistant_content: str, *, session_id: str = "") -> None:
-        """Per-turn persistence is handled by on_session_end via transcript.
+    def _flush(self, reason: str) -> None:
+        if not self._can_write():
+            return
+        rt = self._rt
+        with self._flush_lock:
+            with self._lock:
+                batch, self._pending = self._pending, []
+            failed: list[dict[str, str]] = []
+            for harness_session_id in dict.fromkeys(turn["session"] for turn in batch):
+                turns = [turn for turn in batch if turn["session"] == harness_session_id]
+                try:
+                    rt.client.ingest_session(
+                        "\n\n".join(_render_turn(turn) for turn in turns),
+                        title=f"Hermes session {harness_session_id}",
+                        session_uid=self._ensure_session(harness_session_id),
+                        agent_id=rt.agent_id,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "MindGraph transcript ingest failed (%s; %d turns kept): %s", reason, len(turns), exc
+                    )
+                    failed.extend(turns)
+            if failed:
+                with self._lock:
+                    self._pending = failed + self._pending
+                    self._bound_pending()
 
-        MindGraph's 5-layer extraction pipeline produces better results on a
-        full transcript than on turn-by-turn inserts, so we defer persistence
-        to session end. Explicit ``mindgraph_remember`` / ``mindgraph_commit``
-        tool calls during the conversation still capture turn-level facts
-        immediately.
-        """
+    def _bound_pending(self) -> None:
+        """A persistently failing server must not grow the retry buffer forever."""
+        total = sum(len(t["user"]) + len(t["assistant"]) for t in self._pending)
+        while self._pending and total > MAX_PENDING_CHARS:
+            dropped = self._pending.pop(0)
+            total -= len(dropped["user"]) + len(dropped["assistant"])
+
+    def on_pre_compress(self, messages: list[dict[str, Any]]) -> str:
+        self._flush("pre-compress")
+        return ""
+
+    def on_memory_write(
+        self, action: str, target: str, content: str, metadata: Optional[dict[str, Any]] = None
+    ) -> None:
+        """Mirror built-in memory writes, keyed by content so replays upsert."""
+        rt = self._rt
+        if rt is None or not self._can_write():
+            return
+        previous = (metadata or {}).get("previous_content")
+        # Without the replaced entry's content its identity is unknown; never guess a forget.
+        if action in ("replace", "remove") and isinstance(previous, str) and previous.strip():
+            try:
+                rt.client.forget(
+                    custom_id=builtin_memory_custom_id(target, previous),
+                    reason=f"Hermes built-in memory {action}",
+                    agent_id=rt.agent_id,
+                )
+            except Exception as exc:  # e.g. an entry written before this provider was active
+                logger.debug("MindGraph forget of replaced built-in memory failed: %s", exc)
+        if action in ("add", "replace") and (content or "").strip():
+            try:
+                rt.client.remember(
+                    content.strip(),
+                    custom_id=builtin_memory_custom_id(target, content),
+                    agent_id=rt.agent_id,
+                )
+            except Exception as exc:
+                logger.warning("MindGraph mirror of built-in memory %s failed: %s", action, exc)
+
+    def on_session_switch(
+        self,
+        new_session_id: str,
+        *,
+        parent_session_id: str = "",
+        reset: bool = False,
+        rewound: bool = False,
+        **kwargs: Any,
+    ) -> None:
+        rt = self._rt
+        if rt is None or not new_session_id:
+            return
+        if rewound:
+            # /undo truncated the transcript without saying how far. Unflushed
+            # turns may include what the user retracted, so none become durable.
+            with self._lock:
+                dropped = [t for t in self._pending if t["session"] == new_session_id]
+                self._pending = [t for t in self._pending if t["session"] != new_session_id]
+            if dropped:
+                logger.info("MindGraph dropped %d unflushed turns after an undo", len(dropped))
+            return
+        if new_session_id == rt.session_id:
+            return
+        previous = rt.session_id
+        self._flush("session switch")
+        with self._lock:
+            rt.session_id = new_session_id
+            rt.turn_number = 0
+        self._close_sessions(only=previous)
+
+    def on_session_end(self, messages: list[dict[str, Any]]) -> None:
+        self._flush("session end")
+        self._close_sessions()
+
+    def _close_sessions(self, only: Optional[str] = None) -> None:
+        rt = self._rt
+        if rt is None:
+            return
+        with self._lock:
+            targets = {
+                sid: uid for sid, uid in self._mg_sessions.items() if only is None or sid == only
+            }
+            for sid in targets:
+                del self._mg_sessions[sid]
+        for uid in targets.values():
+            try:
+                rt.client.session(action="close", session_uid=uid, agent_id=rt.agent_id)
+            except Exception as exc:
+                logger.debug("MindGraph session close failed (non-fatal): %s", exc)
+
+    def shutdown(self) -> None:
+        self._flush("shutdown")
+        self._close_sessions()
+        if self._rt is not None:
+            self._rt.close()
 
     # ── Tools ──────────────────────────────────────────────────────────────
 
-    def get_tool_schemas(self) -> List[Dict[str, Any]]:
-        return [
-            _tools.MINDGRAPH_REMEMBER_SCHEMA,
-            _tools.MINDGRAPH_RETRIEVE_SCHEMA,
-            _tools.MINDGRAPH_COMMIT_SCHEMA,
-            _tools.MINDGRAPH_INGEST_SCHEMA,
-            _tools.MINDGRAPH_SYNTHESIZE_SCHEMA,
-        ]
+    def get_tool_schemas(self) -> list[dict[str, Any]]:
+        # Static only. Hermes builds its routing table from this list before
+        # initialize(), so tools that appear later (the MCP server's generated
+        # ontology tools) would be shown to the model but never routed. Domain
+        # objects stay reachable through mindgraph_ontology.
+        return static_tool_schemas()
 
-    def handle_tool_call(self, tool_name: str, args: Dict[str, Any], **kwargs: Any) -> str:
-        return _dispatch_tool_call(tool_name, args)
+    def handle_tool_call(self, tool_name: str, args: dict[str, Any], **kwargs: Any) -> str:
+        if self._rt is None or self._memory_config is None:
+            return '{"error":"MindGraph provider is not initialized"}'
+        return handle_tool(self._rt, self._gate, self._memory_config, tool_name, args)
 
-    # ── Shutdown + session end ─────────────────────────────────────────────
 
-    def on_session_end(self, messages: List[Dict[str, Any]]) -> None:
-        """Close the MindGraph session and ingest the full transcript.
-
-        ``auto_close_session`` runs ``ingest_session`` when ``transcript_messages``
-        is supplied, triggering 5-layer extraction (Reality, Epistemic, Intent,
-        Action, Memory) on the full conversation. This is the primary durable-
-        persistence path — individual turn syncs are deferred to this point.
-        """
-        if self._agent_context != "primary":
-            return
-        summary = ""
-        if self._session_id:
-            summary = f"Hermes session {self._session_id[:8]}"
-        try:
-            _tools.auto_close_session(
-                summary=summary,
-                transcript_messages=messages,
-            )
-        except Exception as e:
-            logger.debug("MindGraph session close failed (non-fatal): %s", e)
-
-    def shutdown(self) -> None:
-        """Drain the prefetch thread and close any still-open session."""
-        if self._prefetch_thread and self._prefetch_thread.is_alive():
-            self._prefetch_thread.join(timeout=5.0)
-        try:
-            _tools.auto_close_session()
-        except Exception as e:
-            logger.debug("MindGraph shutdown close failed (non-fatal): %s", e)
+def _rendered_context(result: str) -> tuple[str, int]:
+    """Rendered text and returned-item count from a memory-tool result; an empty
+    recall injects nothing."""
+    if is_error(result):
+        logger.debug("MindGraph topic recall failed: %s", result[:300])
+        return "", 0
+    try:
+        decoded = json.loads(result)
+    except ValueError:
+        return "", 0
+    text = decoded.get("result") if isinstance(decoded, dict) else None
+    budget = (decoded.get("structured") or {}).get("budget") if isinstance(decoded, dict) else None
+    returned = budget.get("returned_items") if isinstance(budget, dict) else None
+    if returned == 0 or not text:
+        return "", 0
+    return text.strip(), returned if isinstance(returned, int) else 1

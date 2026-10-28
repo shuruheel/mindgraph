@@ -1,0 +1,1447 @@
+{
+  "mcp_version": "0.21.0",
+  "tools": [
+    {
+      "name": "mindgraph_capture",
+      "description": "Capture knowledge into the graph. Use 'entity' for people/orgs/places/events/nations/concepts (auto-deduplicates — safe to call even if already exists), 'observation' for factual statements, 'source' for documents/URLs, 'snippet' for quotes from a source, and 'concept' for abstract ideas. Use 'journal' for quick personal notes, 'lesson' for a durable learning, and 'skill' for a reusable procedure authored from completed work. Skill capture always creates a candidate requiring admin review; it never publishes. Skill names must be 1-64 lowercase a-z, digits, or hyphens, with no leading/trailing/consecutive hyphens and no 'anthropic' or 'claude'. Provide at least one provenance field and write instructions, not a transcript dump.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "entity",
+              "observation",
+              "source",
+              "snippet",
+              "concept",
+              "journal",
+              "lesson",
+              "skill"
+            ],
+            "description": "Type of knowledge to capture"
+          },
+          "label": {
+            "type": "string",
+            "description": "Name, title, or brief heading"
+          },
+          "summary": {
+            "type": "string",
+            "description": "Description or summary text (for entity/observation/source/snippet/concept)"
+          },
+          "content": {
+            "type": "string",
+            "maxLength": 65536,
+            "description": "Journal body (action=journal) or complete SKILL.md instructions, at most 64 KiB UTF-8 (action=skill)"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^(?!.*(?:anthropic|claude))(?!-)(?!.*--)[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$",
+            "description": "Stable skill identifier using lowercase a-z, digits, and hyphens (for action=skill)"
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "description": "When the skill should be used; XML tags are rejected (for action=skill)"
+          },
+          "license": {
+            "type": "string",
+            "description": "Optional skill license (for action=skill)"
+          },
+          "session_uid": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Session UID that produced a lesson or skill"
+          },
+          "work_uid": {
+            "type": "string",
+            "description": "Durable Task/work UID this capture is relevant to"
+          },
+          "execution_uid": {
+            "type": "string",
+            "description": "Material Execution that produced the lesson"
+          },
+          "idempotency_key": {
+            "type": "string",
+            "description": "Stable retry key; a mismatched replay is rejected"
+          },
+          "reuse_uid": {
+            "type": "string",
+            "description": "Reuse this live same-scope node after a duplicate response"
+          },
+          "supersedes_uid": {
+            "type": "string",
+            "description": "Create and mark this same-scope node as superseded"
+          },
+          "contradicts_uid": {
+            "type": "string",
+            "description": "Create and mark this same-scope node as contradicted"
+          },
+          "confirm_new": {
+            "type": "boolean",
+            "description": "Confirm that the new fact is genuinely distinct"
+          },
+          "on_near_duplicate": {
+            "type": "string",
+            "enum": [
+              "create"
+            ],
+            "description": "Alias for confirm_new on a near-duplicate response"
+          },
+          "summarizes_uids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "description": "Source node UIDs the lesson or skill was learned from"
+          },
+          "entity_type": {
+            "type": "string",
+            "enum": [
+              "person",
+              "organization",
+              "place",
+              "event",
+              "nation",
+              "concept"
+            ],
+            "description": "Entity subtype (only for action=entity)"
+          },
+          "source_uid": {
+            "type": "string",
+            "description": "Source node UID (for snippets)"
+          },
+          "mood": {
+            "type": "string",
+            "description": "Emotional tone or mood tag (for action=journal)"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Categorization tags (for action=journal)"
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Confidence score (0-1)"
+          },
+          "salience": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Importance/salience score (0-1)"
+          },
+          "props": {
+            "type": "object",
+            "description": "Type-specific properties (e.g. birth_date for person, coordinates for place)"
+          },
+          "agent_id": {
+            "type": "string",
+            "description": "Agent identity"
+          }
+        },
+        "required": [
+          "action",
+          "label"
+        ],
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "action": {
+                  "const": "skill"
+                }
+              },
+              "required": [
+                "action"
+              ]
+            },
+            "then": {
+              "required": [
+                "name",
+                "description",
+                "content"
+              ],
+              "anyOf": [
+                {
+                  "required": [
+                    "session_uid"
+                  ]
+                },
+                {
+                  "required": [
+                    "work_uid"
+                  ]
+                },
+                {
+                  "required": [
+                    "execution_uid"
+                  ]
+                },
+                {
+                  "required": [
+                    "summarizes_uids"
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "mindgraph_reason",
+      "description": "Record reasoning, claims, and open questions. Use 'claim' when the user states something as true/false with reasoning — creates interconnected Claim + Evidence + Warrant nodes. Set confidence by evidence: 0.9+ for well-sourced, 0.5-0.8 for plausible, <0.5 for speculation. Use 'open_question' for questions worth tracking, 'hypothesis' for testable predictions, 'theory' for explanatory frameworks, 'anomaly' for things that don't fit, 'assumption' for unstated beliefs. Prefer 'claim' when evidence exists, other actions when it doesn't yet.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "description": "Stable retry key; a mismatched replay is rejected"
+          },
+          "reuse_uid": {
+            "type": "string",
+            "description": "Reuse this live same-scope node after a duplicate response"
+          },
+          "supersedes_uid": {
+            "type": "string",
+            "description": "Create and mark this same-scope node as superseded"
+          },
+          "contradicts_uid": {
+            "type": "string",
+            "description": "Create and mark this same-scope node as contradicted"
+          },
+          "confirm_new": {
+            "type": "boolean",
+            "description": "Confirm that the new fact is genuinely distinct"
+          },
+          "on_near_duplicate": {
+            "type": "string",
+            "enum": [
+              "create"
+            ],
+            "description": "Alias for confirm_new on a near-duplicate response"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "claim",
+              "question",
+              "open_question",
+              "hypothesis",
+              "theory",
+              "paradigm",
+              "anomaly",
+              "assumption"
+            ],
+            "description": "Type of reasoning to record"
+          },
+          "label": {
+            "type": "string",
+            "description": "The claim, question, or hypothesis statement (used for non-claim actions, or as fallback for claim if claim object omitted)"
+          },
+          "summary": {
+            "type": "string",
+            "description": "Expanded description or context (for non-claim actions)"
+          },
+          "claim": {
+            "type": "object",
+            "properties": {
+              "label": {
+                "type": "string",
+                "description": "Claim statement"
+              },
+              "content": {
+                "type": "string",
+                "description": "Detailed claim content"
+              },
+              "confidence": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1,
+                "description": "How likely this claim is true (0-1)"
+              }
+            },
+            "required": [
+              "label"
+            ],
+            "description": "The central claim being argued (for action=claim)"
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "label": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "label"
+              ]
+            },
+            "description": "Supporting evidence items (for action=claim)"
+          },
+          "warrant": {
+            "type": "object",
+            "properties": {
+              "label": {
+                "type": "string"
+              },
+              "content": {
+                "type": "string"
+              }
+            },
+            "description": "Logical warrant connecting evidence to claim (for action=claim)"
+          },
+          "argument": {
+            "type": "object",
+            "properties": {
+              "label": {
+                "type": "string"
+              }
+            },
+            "description": "Top-level argument container (for action=claim)"
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Confidence level (for non-claim actions)"
+          },
+          "salience": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Importance score (for non-claim actions)"
+          },
+          "props": {
+            "type": "object",
+            "description": "Type-specific properties"
+          },
+          "agent_id": {
+            "type": "string",
+            "description": "Agent identity"
+          }
+        },
+        "required": [
+          "action"
+        ]
+      }
+    },
+    {
+      "name": "mindgraph_commit",
+      "description": "Track goals, projects, milestones, and decisions. Use 'goal' for desired outcomes ('I want to learn Rust'), 'project' for organized efforts, 'milestone' for checkpoints. Link milestones to projects and projects to goals via parent_uid. Use 'open_decision' when facing a choice ('Postgres vs SQLite?'), 'add_option'/'add_constraint' to build out alternatives, 'resolve_decision' to pick one, 'get_open_decisions' to review pending choices.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "description": "Stable retry key; a mismatched replay is rejected"
+          },
+          "reuse_uid": {
+            "type": "string",
+            "description": "Reuse this live same-scope node after a duplicate response"
+          },
+          "supersedes_uid": {
+            "type": "string",
+            "description": "Create and mark this same-scope node as superseded"
+          },
+          "contradicts_uid": {
+            "type": "string",
+            "description": "Create and mark this same-scope node as contradicted"
+          },
+          "confirm_new": {
+            "type": "boolean",
+            "description": "Confirm that the new fact is genuinely distinct"
+          },
+          "on_near_duplicate": {
+            "type": "string",
+            "enum": [
+              "create"
+            ],
+            "description": "Alias for confirm_new on a near-duplicate response"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "goal",
+              "project",
+              "milestone",
+              "open_decision",
+              "add_option",
+              "add_constraint",
+              "resolve_decision",
+              "get_open_decisions"
+            ],
+            "description": "Commitment or decision action"
+          },
+          "label": {
+            "type": "string",
+            "description": "Name of the goal, project, milestone, decision, option, or constraint"
+          },
+          "summary": {
+            "type": "string",
+            "description": "Description, success criteria, or rationale"
+          },
+          "parent_uid": {
+            "type": "string",
+            "description": "Parent goal/project UID to link under (for goal/project/milestone)"
+          },
+          "decision_uid": {
+            "type": "string",
+            "description": "Decision UID (for add_option, add_constraint, resolve_decision)"
+          },
+          "chosen_option_uid": {
+            "type": "string",
+            "description": "UID of the chosen option (for resolve_decision)"
+          },
+          "informs_uid": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Decision-time context UIDs to link with dated INFORMS edges"
+          },
+          "as_of_date": {
+            "type": "string",
+            "description": "ISO 8601 date when the decision context was available"
+          },
+          "session_id": {
+            "type": "string",
+            "description": "Session whose retrieval context informed the decision"
+          },
+          "retrieval_trace_id": {
+            "type": "string",
+            "description": "Identifier of the decision-time retrieval trace"
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "salience": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "props": {
+            "type": "object",
+            "description": "Type-specific properties (e.g. status, priority, deadline, horizon for goals)"
+          },
+          "agent_id": {
+            "type": "string",
+            "description": "Agent identity"
+          }
+        },
+        "required": [
+          "action"
+        ]
+      }
+    },
+    {
+      "name": "mindgraph_plan",
+      "description": "Authoritative durable engineering work and execution evidence. Use create_task/create_plan/add_step for work that must survive sessions; resume_work for the deterministic bounded brief; claim_task + heartbeat for the fenced lease; and start_iteration/checkpoint_iteration/block_task/complete_task/abandon_iteration for idempotent material attempts. Every composite write needs task version, Session, lease epoch, and an idempotency key. Use the harness-native todo list only for local coordination; never maintain the same authoritative Task in both systems.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "create_task",
+              "create_plan",
+              "add_step",
+              "update_status",
+              "get_plan",
+              "resume_work",
+              "claim_task",
+              "heartbeat",
+              "start_iteration",
+              "checkpoint_iteration",
+              "block_task",
+              "complete_task",
+              "abandon_iteration",
+              "start_execution",
+              "complete_execution",
+              "fail_execution",
+              "register_agent",
+              "get_executions",
+              "get_pending",
+              "create_flow",
+              "add_procedure_step",
+              "add_affordance",
+              "add_control",
+              "assess_risk",
+              "get_assessments"
+            ],
+            "description": "Planning, procedure, or governance action"
+          },
+          "label": {
+            "type": "string",
+            "description": "Task, plan, step, flow, policy, or risk label"
+          },
+          "summary": {
+            "type": "string",
+            "description": "Description"
+          },
+          "plan_uid": {
+            "type": "string",
+            "description": "Plan UID (for create_plan execution link, add_step, get_plan)"
+          },
+          "task_uid": {
+            "type": "string",
+            "description": "Task UID (for create_plan and graph-managed work actions)"
+          },
+          "step_uid": {
+            "type": "string",
+            "description": "PlanStep UID for an iteration/checkpoint"
+          },
+          "session_uid": {
+            "type": "string",
+            "description": "Durable Session UID that owns the task lease"
+          },
+          "goal_uid": {
+            "type": "string",
+            "description": "Goal UID targeted by a task or plan"
+          },
+          "target_uid": {
+            "type": "string",
+            "description": "Task/plan/step UID for update_status, or parent/target node for procedure and risk actions"
+          },
+          "execution_uid": {
+            "type": "string",
+            "description": "Execution UID (required for complete_execution/fail_execution)"
+          },
+          "executor_uid": {
+            "type": "string",
+            "description": "Agent node UID that executed the work"
+          },
+          "affordance_uid": {
+            "type": "string",
+            "description": "Affordance invoked by start_execution"
+          },
+          "produces_node_uid": {
+            "type": "string",
+            "description": "Node produced by a completed execution"
+          },
+          "filter_plan_uid": {
+            "type": "string",
+            "description": "Restrict get_executions to one plan"
+          },
+          "depends_on_uids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Plan-step UIDs that an added step depends on"
+          },
+          "related_uids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Target node UIDs to link to created work or an execution"
+          },
+          "status": {
+            "type": "string",
+            "description": "New status value (for update_status)"
+          },
+          "task_status": {
+            "type": "string",
+            "description": "Task status requested by a checkpoint or abandon action"
+          },
+          "step_status": {
+            "type": "string",
+            "description": "PlanStep status requested by a checkpoint"
+          },
+          "execution_status": {
+            "type": "string",
+            "enum": [
+              "completed",
+              "failed",
+              "abandoned"
+            ],
+            "description": "Terminal Execution status for checkpoint_iteration"
+          },
+          "expected_version": {
+            "type": "number",
+            "description": "Current Task node version used as the optimistic fence"
+          },
+          "lease_epoch": {
+            "type": "number",
+            "description": "Current monotonic task-lease epoch"
+          },
+          "lease_ttl_secs": {
+            "type": "number",
+            "minimum": 1,
+            "description": "Requested server-time lease lifetime (default 300s)"
+          },
+          "idempotency_key": {
+            "type": "string",
+            "description": "Caller-stable key required for every composite work mutation"
+          },
+          "allow_takeover": {
+            "type": "boolean",
+            "description": "Governed claim override for a live lease owned by another agent"
+          },
+          "release_lease": {
+            "type": "boolean",
+            "description": "Explicitly release or retain the lease after block/abandon/checkpoint"
+          },
+          "override_reason": {
+            "type": "string",
+            "description": "Explicit completion reason when no terminal Execution evidence exists"
+          },
+          "scope_uids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Required target UIDs for create_task and ordinary target UIDs that bound deterministic resume selection"
+          },
+          "limit": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 1,
+            "description": "Resume returns one authoritative Task"
+          },
+          "input_snapshot": {
+            "type": "object",
+            "description": "Structured inputs captured when an execution starts"
+          },
+          "output_snapshot": {
+            "type": "object",
+            "description": "Structured outputs captured when an execution completes or fails"
+          },
+          "outcome": {
+            "type": "string",
+            "description": "Execution outcome"
+          },
+          "error": {
+            "type": "string",
+            "description": "Execution error detail (for fail_execution)"
+          },
+          "side_effects": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Observable side effects of the execution"
+          },
+          "next_action": {
+            "type": "string",
+            "description": "Recommended next action retained on terminal Execution evidence"
+          },
+          "checkpoint_summary": {
+            "type": "string",
+            "description": "Bounded material-attempt checkpoint summary"
+          },
+          "test_summary": {
+            "type": "string",
+            "description": "Test commands/results retained on the Execution"
+          },
+          "produces_node_uids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Nodes produced by checkpoint_iteration"
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "salience": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "props": {
+            "type": "object",
+            "description": "Additional properties (e.g. likelihood, impact, mitigation for risks)"
+          },
+          "agent_id": {
+            "type": "string",
+            "description": "Agent identity"
+          }
+        },
+        "required": [
+          "action"
+        ]
+      }
+    },
+    {
+      "name": "mindgraph_retrieve",
+      "description": "Search and explore the knowledge graph. NOT for work state: for 'what was I working on' or resuming work, use mindgraph_plan action resume_work (structural, deterministic) — this tool is semantic/keyword recall over ALL knowledge. Use 'context' (default) for BM25 keyword retrieval plus bounded cheapest-first graph expansion — returns graph nodes only by default (labels, summaries, types, confidence); set include_chunks=true to also get full source text. Pass 1-3 discriminating keywords, not sentences. GOOD: 'Kissinger NATO'. BAD: 'What is Kissinger\\'s view on NATO?'. Use 'document_index' to list all ingested documents (titles, dates, UIDs) for orientation. Use 'semantic' when keywords return nothing — conceptual/fuzzy queries. Use 'hybrid' for keyword + semantic. Use 'text' for fast keyword-only. Use 'neighborhood'/'chain'/'path'/'subgraph' for graph traversal — traversal steps carry the cheapest witness path_cost (lower = stronger connection; sum of -ln(edge weight)), path_confidence, and witness depth. Use 'preferences' for advice or recommendation requests ('suggest a hotel', 'what should I read?') — it returns the user's stated/learned preferences relevant to the query (pass the topic as 'query'), so your answer reflects what they actually like instead of being generic. Other structured actions ('active_goals', 'open_questions', etc.) only when the user explicitly asks.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "text",
+              "context",
+              "semantic",
+              "hybrid",
+              "active_goals",
+              "open_questions",
+              "weak_claims",
+              "pending_approvals",
+              "unresolved_contradictions",
+              "stale_derivations",
+              "preferences",
+              "layer",
+              "recent",
+              "chain",
+              "neighborhood",
+              "path",
+              "subgraph",
+              "top_k_paths",
+              "document_index"
+            ],
+            "description": "Retrieval or traversal strategy"
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "text",
+              "json"
+            ],
+            "description": "Output format (default 'text'): a compact rendered context block — labels, uids, summaries, status tags, relationships. Pass 'json' for the raw server response (full props, source-chunk offsets, retrieval metadata)."
+          },
+          "max_output_chars": {
+            "type": "integer",
+            "minimum": 512,
+            "maximum": 24000,
+            "description": "Hard character budget for rendered text output (512-24000; default 24000). Normal per-field clipping still applies. Whole evidence items are then kept or omitted rather than cut to satisfy this budget; the final marker reports omissions. Ignored when format='json'."
+          },
+          "query": {
+            "type": "string",
+            "description": "Search query — for 'text'/'context': 1-3 BM25 keywords, drop filler words. For 'semantic'/'hybrid': natural language is OK since it uses vector similarity."
+          },
+          "start_uid": {
+            "type": "string",
+            "description": "Starting node UID (for chain, neighborhood, path, subgraph)"
+          },
+          "end_uid": {
+            "type": "string",
+            "description": "Target node UID (for path)"
+          },
+          "max_depth": {
+            "type": "number",
+            "description": "Maximum traversal depth (for chain, neighborhood, path, subgraph)"
+          },
+          "direction": {
+            "type": "string",
+            "enum": [
+              "outgoing",
+              "incoming",
+              "both"
+            ],
+            "description": "Traversal direction (for neighborhood, subgraph)"
+          },
+          "edge_types": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Filter by edge types (for traversal actions)"
+          },
+          "exclude_edge_types": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Denylist edge types (for traversal actions)"
+          },
+          "include_provenance": {
+            "type": "boolean",
+            "description": "Include ingestion/provenance edges in traversal (default false)"
+          },
+          "max_nodes": {
+            "type": "number",
+            "description": "Global distinct-node traversal budget, including the seed (default 500)"
+          },
+          "node_types": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Filter by node types (e.g. ['Claim', 'Entity', 'Observation'])"
+          },
+          "layer": {
+            "type": "string",
+            "enum": [
+              "reality",
+              "epistemic",
+              "intent",
+              "action",
+              "memory",
+              "agent"
+            ],
+            "description": "Filter by cognitive layer"
+          },
+          "limit": {
+            "type": "number",
+            "description": "Max results to return (default: 27)"
+          },
+          "offset": {
+            "type": "number",
+            "description": "Pagination offset (for stale_derivations)"
+          },
+          "include_documents": {
+            "type": "boolean",
+            "description": "Include ingested documents and wiki articles in context results. The coding profile defaults these OFF so engineering questions aren't answered from unrelated ingested content; pass true when the question is about a document, spec, or article — or false in any profile to drop the article leg."
+          },
+          "article_limit": {
+            "type": "number",
+            "description": "Max wiki articles in context results (default 3; 0 disables the article leg). An explicit value overrides profile defaults, including the coding profile's articles-off default."
+          },
+          "valid_at": {
+            "type": "string",
+            "description": "ISO-8601 date (e.g. '2021-06') for context: nodes with validity windows are annotated as of this date instead of today"
+          },
+          "created_after": {
+            "type": "number",
+            "description": "Unix seconds — 'recent' action: only nodes ingested after this time"
+          },
+          "created_before": {
+            "type": "number",
+            "description": "Unix seconds — 'recent' action: only nodes ingested before this time"
+          },
+          "explain": {
+            "type": "boolean",
+            "description": "hybrid action: include per-leg retrieval scoring (legs) in the response"
+          },
+          "k": {
+            "type": "number",
+            "description": "top_k_paths action: number of cheapest paths (default 3, cap 25)"
+          },
+          "max_cost": {
+            "type": "number",
+            "description": "top_k_paths action: optional cost ceiling for returned paths"
+          },
+          "include_chunks": {
+            "type": "boolean",
+            "description": "Include source document chunks in context results (default: false — set true to fetch full chunk text for citations or deep reading)"
+          },
+          "include_graph": {
+            "type": "boolean",
+            "description": "Include graph nodes in context results (default: true)"
+          },
+          "graph_expansion_limit": {
+            "type": "number",
+            "description": "Context-only graph expansion slots (default 3; set 0 for direct-only retrieval)"
+          },
+          "graph_max_depth": {
+            "type": "number",
+            "description": "Context-only graph expansion hop limit (default 2)"
+          },
+          "confidence_min": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Minimum confidence filter (for recent action)"
+          },
+          "salience_min": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Minimum salience filter (for recent action)"
+          },
+          "agent_id": {
+            "type": "string",
+            "description": "Agent identity"
+          }
+        },
+        "required": [
+          "action"
+        ]
+      }
+    },
+    {
+      "name": "mindgraph_series_query",
+      "description": "Read dense numeric time series without placing raw points in general retrieval context. Use list_for_entity to discover series, latest for cached statistics, window for [from,to) keyset pages, and aggregate for bounded calendar buckets.",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "list_for_entity",
+              "latest",
+              "window",
+              "aggregate"
+            ]
+          },
+          "entity_uid": {
+            "type": "string"
+          },
+          "series_uid": {
+            "type": "string"
+          },
+          "from": {
+            "type": "number"
+          },
+          "to": {
+            "type": "number"
+          },
+          "cursor": {
+            "type": "number"
+          },
+          "limit": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 10000
+          },
+          "bucket": {
+            "type": "string",
+            "enum": [
+              "year",
+              "quarter",
+              "month",
+              "week",
+              "day",
+              "hour"
+            ]
+          },
+          "agg": {
+            "type": "string",
+            "enum": [
+              "sum",
+              "mean",
+              "min",
+              "max",
+              "count",
+              "std_dev",
+              "last"
+            ]
+          },
+          "fill": {
+            "type": "string",
+            "enum": [
+              "none",
+              "null",
+              "prev"
+            ]
+          }
+        },
+        "required": [
+          "action"
+        ]
+      }
+    },
+    {
+      "name": "mindgraph_ingest",
+      "description": "Ingest long-form content (articles, transcripts, documents, meeting notes) into the knowledge graph. The pipeline automatically chunks the text, extracts entities/claims/relationships via LLM, and deduplicates against existing nodes. Use 'chunk' for a single passage (synchronous), 'document' for full documents (async — returns a job ID), 'session' for conversation transcripts. Use 'job_status' to check progress. For short individual facts, use the specific cognitive tools instead.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "chunk",
+              "document",
+              "session",
+              "job_status"
+            ],
+            "description": "Ingestion action"
+          },
+          "content": {
+            "type": "string",
+            "description": "Text content to ingest (for chunk/document/session)"
+          },
+          "title": {
+            "type": "string",
+            "description": "Document or session title"
+          },
+          "source_uri": {
+            "type": "string",
+            "description": "Source URL or reference"
+          },
+          "content_type": {
+            "type": "string",
+            "enum": [
+              "article",
+              "meeting_notes",
+              "report",
+              "journal",
+              "transcript"
+            ],
+            "description": "Semantic type that drives default extraction layers. IMPORTANT: for conversation transcripts, use action 'session' OR content_type 'transcript' — otherwise Decisions, Options, and Constraints are NOT extracted."
+          },
+          "document_type": {
+            "type": "string",
+            "description": "Free-form document type label (e.g. 'note', 'spec')."
+          },
+          "layers": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "reality",
+                "epistemic",
+                "intent",
+                "action",
+                "memory",
+                "agent",
+                "ontology"
+              ]
+            },
+            "description": "Cognitive layers to extract (defaults vary by action). 'ontology' is a targeting flag rather than a cognitive layer: include it only alongside ontology_schema_id, and list it alone to extract domain objects without any cognitive extraction."
+          },
+          "ontology_schema_id": {
+            "type": "string",
+            "description": "When set, run typed Layer-7 (domain-object) extraction against this schema in addition to the cognitive layers. This field alone drives domain-object extraction — listing 'ontology' in layers without it extracts nothing."
+          },
+          "participants": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "organization": {
+                  "type": "string"
+                },
+                "role": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "name"
+              ]
+            },
+            "description": "Named conversation participants. Maps generic speaker labels ('Interviewer:') to real people so claims/demands attribute to the named person."
+          },
+          "occurred_at": {
+            "type": "string",
+            "description": "When the conversation/document occurred (ISO-8601)."
+          },
+          "context": {
+            "type": "string",
+            "description": "Free-text context grounding attribution during extraction."
+          },
+          "document_uid": {
+            "type": "string",
+            "description": "chunk action: the parent Document uid, so this chunk joins that document's provenance chain."
+          },
+          "chunk_index": {
+            "type": "number",
+            "description": "chunk action: 0-based index of this chunk within its document."
+          },
+          "chunk_size": {
+            "type": "integer",
+            "minimum": 50,
+            "maximum": 32000,
+            "default": 2000,
+            "description": "Maximum tokens per chunk for document or session ingestion (default: 2000)"
+          },
+          "chunk_overlap": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 0.9,
+            "default": 0.1,
+            "description": "Fractional overlap between adjacent chunks for document or session ingestion (default: 0.1; maximum: 0.9)"
+          },
+          "job_id": {
+            "type": "string",
+            "description": "Job ID to check status (for job_status action)"
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "text",
+              "json"
+            ],
+            "description": "job_status without job_id: 'text' (default) renders the 20 most recent jobs; 'json' returns the full raw list."
+          },
+          "agent_id": {
+            "type": "string",
+            "description": "Agent identity"
+          }
+        },
+        "required": [
+          "action"
+        ]
+      }
+    },
+    {
+      "name": "mindgraph_synthesize",
+      "description": "Work with Projects — scoped document corpora — and run cross-document synthesis over them. Use 'signals' to mine structural signals (entity bridges, claim hubs, theory support gaps, concept clusters, analogy candidates, dialectical pairs) without any LLM calls; useful for orientation before a full synthesis. Use 'run' to spawn a background synthesis job that turns the top idea clusters into Article nodes linked via Covers edges. Both operate on a Project's corpus, where documents are linked to the Project via PartOfProject edges (create the project with mindgraph_commit action 'project', then link docs via the ingest flow or add_link). Use 'job_status' to poll a synthesis job.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "signals",
+              "run",
+              "job_status"
+            ],
+            "description": "Synthesis action"
+          },
+          "project_uid": {
+            "type": "string",
+            "description": "UID of the Project node (required for signals/run)"
+          },
+          "signals": {
+            "type": "string",
+            "description": "Comma-separated subset of signal names to compute, e.g. 'clustered_claim_hubs,dialectical_pairs'. If omitted, all signals run. (Only for action='signals'.)"
+          },
+          "target_types": {
+            "type": "string",
+            "description": "Comma-separated node types used to filter entity_bridges and claim_hubs (e.g. 'Person,Organization,Theory'). (Only for action='signals'.)"
+          },
+          "job_id": {
+            "type": "string",
+            "description": "Job ID to poll (for action='job_status')"
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "text",
+              "json"
+            ],
+            "description": "signals action: 'text' (default) renders signal sections; 'json' returns the raw payload."
+          },
+          "agent_id": {
+            "type": "string",
+            "description": "Agent identity"
+          }
+        },
+        "required": [
+          "action"
+        ]
+      }
+    },
+    {
+      "name": "mindgraph_ontology",
+      "description": "Work with the Operational Ontology (Layer 7) — workspace-specific domain objects typed by a user-approved schema (e.g. Client, Contract, Patient, Experiment). Use 'schemas'/'schema' to discover what object and relation types exist before anything else. Use 'query' for natural-language retrieval of typed objects with cognitive context (claims, decisions, risks about them) and source provenance; 'search' for hybrid search over objects; 'objects'/'object'/'object_context' to browse instances. Extraction proposes new objects/relations into a review queue rather than writing directly: use 'proposals'/'proposal' to inspect the queue, and 'approve'/'reject' ONLY when the user explicitly asks — proposal review is the human-in-the-loop boundary. Use 'link' to relate two existing objects, 'extract' to run schema-typed extraction over already-ingested sources.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "schemas",
+              "schema",
+              "query",
+              "search",
+              "objects",
+              "object",
+              "object_context",
+              "proposals",
+              "proposal",
+              "approve",
+              "reject",
+              "link",
+              "extract"
+            ],
+            "description": "Ontology operation"
+          },
+          "schema_id": {
+            "type": "string",
+            "description": "Ontology schema ID (required for query/objects/extract; optional filter for proposals). Get it from action='schemas'."
+          },
+          "query": {
+            "type": "string",
+            "description": "Natural-language query (for action=query) or search text (for action=search)"
+          },
+          "object_types": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Restrict to these object type names, e.g. ['Client'] (for query/search)"
+          },
+          "object_type": {
+            "type": "string",
+            "description": "Single object type name filter (for objects/proposals)"
+          },
+          "uid": {
+            "type": "string",
+            "description": "Domain object UID (for object/object_context)"
+          },
+          "depth": {
+            "type": "number",
+            "description": "Traversal depth for context (for query/object_context, default 1)"
+          },
+          "include_cognitive_context": {
+            "type": "boolean",
+            "description": "Include linked cognitive nodes — claims, decisions, risks (for action=query, default true)"
+          },
+          "include_sources": {
+            "type": "boolean",
+            "description": "Include source provenance entries (for action=query, default true)"
+          },
+          "limit": {
+            "type": "number",
+            "description": "Max results (for query/search/objects/proposals)"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "approved",
+              "approval_required",
+              "rejected",
+              "applied",
+              "apply_failed"
+            ],
+            "description": "Review-status filter (for action=proposals, default 'pending')"
+          },
+          "proposal_id": {
+            "type": "string",
+            "description": "Proposal ID (for proposal/approve/reject)"
+          },
+          "feedback": {
+            "type": "string",
+            "description": "Reviewer feedback to record (for action=approve)"
+          },
+          "reason": {
+            "type": "string",
+            "description": "Rejection reason (for action=reject)"
+          },
+          "from_uid": {
+            "type": "string",
+            "description": "Source domain object UID (for action=link)"
+          },
+          "to_uid": {
+            "type": "string",
+            "description": "Target domain object UID (for action=link)"
+          },
+          "relation_type": {
+            "type": "string",
+            "description": "Relation type name from the schema (for action=link)"
+          },
+          "fields": {
+            "type": "object",
+            "description": "Relation field values (for action=link)"
+          },
+          "source_uids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Chunk/document UIDs to extract from (for action=extract)"
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "text",
+              "json"
+            ],
+            "description": "Output format for the read actions query/search/objects/object/object_context (default 'text'): a compact rendered block. Pass 'json' for the raw server response."
+          },
+          "agent_id": {
+            "type": "string",
+            "description": "Agent identity"
+          }
+        },
+        "required": [
+          "action"
+        ]
+      }
+    },
+    {
+      "name": "mindgraph_remember",
+      "description": "Small-text memory fast path. 'remember' stores one fact, preference, decision or note synchronously; it is BM25- and vector-searchable the moment the call returns (the response says which). Pass a stable custom_id (e.g. 'pref:theme', 'deploy:target') so re-sending the same key UPDATES the same memory instead of creating a duplicate — that is the idempotency contract; without custom_id an exact duplicate is reused. 'forget' reversibly removes a memory by uid or custom_id (tombstone plus connected edges): call it with dry_run=true first to see the edge uids it would remove, then without. Undo with mindgraph_capture-independent server actions /evolve restore and restore_edge. Use mindgraph_capture for typed entities, sources and skills, and mindgraph_ingest for documents longer than a few paragraphs.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "remember",
+              "forget"
+            ],
+            "description": "remember = store/upsert one small text; forget = reversible removal"
+          },
+          "text": {
+            "type": "string",
+            "description": "remember: the memory text (≤ 8 KiB). Use mindgraph_ingest for longer content."
+          },
+          "custom_id": {
+            "type": "string",
+            "description": "Caller-owned key. remember: re-sending it edits the same memory (version bump, history kept). forget: the memory to remove."
+          },
+          "label": {
+            "type": "string",
+            "description": "remember: optional short title; defaults to the first line of text"
+          },
+          "uid": {
+            "type": "string",
+            "description": "forget: node uid to remove (alternative to custom_id)"
+          },
+          "dry_run": {
+            "type": "boolean",
+            "description": "forget: preview the affected edge uids without changing anything"
+          },
+          "cascade": {
+            "type": "boolean",
+            "description": "forget: also tombstone connected edges (default true)"
+          },
+          "reason": {
+            "type": "string",
+            "description": "forget: why (recorded on the tombstone)"
+          },
+          "space_uid": {
+            "type": "string",
+            "description": "remember: explicit target Space (default: the org space)"
+          },
+          "on_near_duplicate": {
+            "type": "string",
+            "enum": [
+              "reuse",
+              "create"
+            ],
+            "description": "remember without custom_id: on an exact duplicate, reuse the existing memory (default) or create anyway"
+          },
+          "props": {
+            "type": "object",
+            "description": "remember: extra Observation props"
+          },
+          "agent_id": {
+            "type": "string",
+            "description": "Agent identifier (default: configured agent)"
+          }
+        },
+        "required": [
+          "action"
+        ]
+      }
+    },
+    {
+      "name": "mindgraph_memory",
+      "description": "Read the portable MindGraph memory surface. Use action='context' with mode='resume' or 'continuity' for authoritative task-first work state, and mode='topic' with a short keyword query for prior knowledge relevant to the user's request. Use action='status' to inspect integration capabilities and limitations. This tool never writes; durable capture and correction use the existing typed MindGraph write tools.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "status",
+              "context"
+            ],
+            "description": "Read integration status or bounded memory context"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "topic",
+              "continuity",
+              "resume"
+            ],
+            "description": "Context strategy. topic uses query-shaped retrieval; continuity/resume use authoritative task-first resume_work."
+          },
+          "query": {
+            "type": "string",
+            "description": "Required for mode='topic': 1-3 discriminating BM25 keywords, not a full sentence"
+          },
+          "project_uid": {
+            "type": "string",
+            "description": "Optional project scope"
+          },
+          "task_uid": {
+            "type": "string",
+            "description": "Optional task scope for resume context"
+          },
+          "session_uid": {
+            "type": "string",
+            "description": "Optional durable session scope"
+          },
+          "scope_uids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Optional explicit graph scopes for continuity/resume"
+          },
+          "node_types": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Optional node-type filter for topic context"
+          },
+          "layer": {
+            "type": "string",
+            "enum": [
+              "reality",
+              "epistemic",
+              "intent",
+              "action",
+              "memory",
+              "agent"
+            ],
+            "description": "Optional cognitive-layer filter for topic context"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50,
+            "default": 8,
+            "description": "Maximum direct graph items requested before bounded expansion"
+          },
+          "include_chunks": {
+            "type": "boolean",
+            "default": false,
+            "description": "Include bounded source excerpts when topic summaries are insufficient"
+          },
+          "include_documents": {
+            "type": "boolean",
+            "default": false,
+            "description": "Include bounded knowledge articles for topic context"
+          },
+          "valid_at": {
+            "type": "string",
+            "description": "Optional ISO timestamp for time-aware topic retrieval"
+          },
+          "graph_expansion_limit": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 20,
+            "default": 3,
+            "description": "Bounded graph neighbors added after direct topic matches"
+          },
+          "graph_max_depth": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 5,
+            "default": 2,
+            "description": "Maximum graph-expansion depth for topic context"
+          },
+          "max_output_chars": {
+            "type": "integer",
+            "minimum": 512,
+            "maximum": 24000,
+            "default": 8000,
+            "description": "Hard character budget for model-ready context; whole items are retained or omitted"
+          },
+          "agent_id": {
+            "type": "string",
+            "description": "Agent identity"
+          }
+        },
+        "required": [
+          "action"
+        ]
+      }
+    }
+  ],
+  "instructions": "You have access to a persistent knowledge graph via MindGraph.\n\n## Default memory workflow: orient → answer → preserve\n\n**Orient only when prior durable state may matter.** Self-contained questions do not require a memory call or a warm-up sequence.\n\n- Resuming work, asking what was in progress, or continuing a task: call `mindgraph_memory` once with action `context` and mode `resume` or `continuity`. This uses authoritative, task-first, lease-aware work state.\n- Asking about a topic that may depend on prior knowledge: call `mindgraph_memory` once with action `context`, mode `topic`, and 1–3 discriminating keywords.\n- Asking about integration capability or automatic behavior: call `mindgraph_memory` with action `status`.\n- Use the comprehensive read tools below only when the high-level result is insufficient or the user asks for a specific graph operation.\n\n**Answer from the bounded result.** Treat superseded, refuted, or out-of-validity items as warnings, not current facts. Retrieval proves only that the server returned context; it does not prove that a host automatically injected or used it.\n\n**Respect failed tool results.** An isError result is a failed operation, not evidence that the graph has no matches. Preserve its code and retry guidance. If retriable is false, do not automatically repeat the unchanged call or silently substitute another retrieval mode. Explain the failure; a narrower query or a later user-requested retry is a separate decision.\n\n**Preserve selectively after material durable change.** Use the existing typed write tool for a fact, correction, decision, work-state transition, or reusable lesson. Do not write ephemeral conversation, routine mechanics, unsupported guesses, or information already represented accurately. An explicit no-write is the correct outcome when nothing durable changed.\n\n## Topic retrieval details\n\nTopic context is graph-only by default. Set `include_chunks: true` only for source text needed for quotes, citations, or missing detail. Query with a few proper nouns or technical terms rather than a full sentence. If keyword retrieval succeeds but returns no matches, use `mindgraph_retrieve` with `semantic` or `hybrid\\"
+}

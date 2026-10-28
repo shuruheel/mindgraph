@@ -1,11 +1,9 @@
 manifest_version: 1
 name: mindgraph
-version: 0.10.0
-description: "MindGraph — semantic graph memory with hybrid retrieval, goal/decision tracking, and cross-document synthesis."
+version: 1.0.0
+description: "MindGraph — typed knowledge-graph memory: bounded per-message recall, session transcript capture, and the full mindgraph-mcp tool surface (capture, reason, commit, plan, retrieve, remember, ingest, synthesize, ontology)."
 author: Shan Rizvi
-
-pip_dependencies:
-  - mindgraph-sdk>=0.4.0
+requires_hermes: ">=0.22.0"
 
 requires_env:
   - name: MINDGRAPH_API_KEY
@@ -13,6 +11,16 @@ requires_env:
     url: "https://mindgraph.cloud"
     secret: true
 
-# Optional env vars (not prompted — set manually in ~/.hermes/.env if needed):
-#   MINDGRAPH_BASE_URL   Override the API endpoint (default: https://api.mindgraph.cloud)
-#   MINDGRAPH_AGENT_ID   Stamped on every write for provenance (default: hermes)
+hooks:
+  - on_turn_start
+  - on_session_end
+  - on_session_switch
+  - on_pre_compress
+  - on_memory_write
+
+# Optional (not prompted; set in the profile's .env):
+#   MINDGRAPH_BASE_URL      API endpoint (default https://api.mindgraph.cloud)
+#   MINDGRAPH_AGENT_ID      provenance tag on writes (default hermes)
+#   MINDGRAPH_ORG_ID        org header for multi-org keys
+#   MINDGRAPH_GOVERNANCE    "off" skips the per-call governance checkpoint
+#   MINDGRAPH_AUTO_CAPTURE  "off" stops automatic transcript ingestion
