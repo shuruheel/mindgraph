@@ -384,6 +384,17 @@ def render_context(response: Any, max_chars: Optional[float] = None) -> Optional
     payload = _obj(response)
     if payload is None:
         return None
+    # Evidence plan R2 (2026-11-06): a server that rendered the evidence
+    # itself (``format: "text"``) is the one contract every door shares —
+    # dated items, supersession and conflict markers, a hard token budget.
+    # Pass it through under the character guard; the local renderer below
+    # serves older servers.
+    server_text = payload.get("context_text")
+    if isinstance(server_text, str) and server_text:
+        budget = render_budget(max_chars)
+        if budget is not None and len(server_text) > budget:
+            return f"{server_text[:budget]}\n[truncated to {budget} characters]"
+        return server_text
     graph = _obj(payload.get("graph")) or {}
     shaped = [n for n in _list(graph.get("nodes")) if _is_node_shaped(n)]
     nodes = [n for n in shaped if (_str(n.get("node_type")) or "") not in INFRA_NODE_TYPES]
