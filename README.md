@@ -70,10 +70,15 @@ The MCP server's generated per-object-type ontology tools are not exposed (Herme
 ```bash
 python3 -m pytest                                  # needs mindgraph-sdk importable
 node scripts/sync_from_mcp.mjs ../mindgraph-mcp    # regenerate mcp_contract.json
+node scripts/gen_mcp_fixtures.mjs ../mindgraph-mcp # regenerate tests/fixtures/mcp_requests.json
 python3 scripts/check_version.py                   # plugin.yaml == pyproject.toml == __init__.py
 ```
 
-`mcp_contract.json` is generated; edit the MCP server and re-sync instead.
+`mcp_contract.json` is generated; edit the MCP server and re-sync instead. Point both scripts at a released `v*` tag of mindgraph-mcp with its dependencies installed (`npm ci`); they use that checkout's esbuild and install nothing here.
+
+`tests/fixtures/mcp_requests.json` records the HTTP requests the MCP server's own handlers send for a fixed set of tool calls; `tests/test_mcp_request_parity.py` replays the same calls through this plugin and asserts the same requests. `tests/test_contract_parity.py` fails when the contract advertises a parameter no handler reads.
+
+The `contract-drift` workflow (weekly, on demand, and on PRs touching the contract, scripts, handlers, renderer or fixtures) regenerates both files from the latest mindgraph-mcp `v*` tag and fails when they differ from the checked-in copies. To fix it, run both scripts against that tag, port the handler changes the diff shows, and commit the regenerated files. The ordinary test workflow needs no Node.
 
 ## License
 

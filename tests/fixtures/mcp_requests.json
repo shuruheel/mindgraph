@@ -1,0 +1,489 @@
+{
+  "mcp_version": "0.25.0",
+  "base_url": "http://mindgraph.test",
+  "agent_id": "hermes",
+  "invocation_context": {
+    "harnessSessionId": "hermes-session",
+    "harnessTurnId": "1"
+  },
+  "cases": [
+    {
+      "id": "retrieve_context_default",
+      "tool": "mindgraph_retrieve",
+      "args": {
+        "action": "context",
+        "query": "Kissinger NATO"
+      },
+      "requests": [
+        {
+          "method": "POST",
+          "path": "/retrieve/context",
+          "body": {
+            "query": "Kissinger NATO",
+            "chunk_limit": 0,
+            "graph_expansion_limit": 3,
+            "graph_max_depth": 2,
+            "format": "text",
+            "max_tokens": 6000
+          }
+        }
+      ]
+    },
+    {
+      "id": "retrieve_context_as_of_exhaustive",
+      "tool": "mindgraph_retrieve",
+      "args": {
+        "action": "context",
+        "query": "board members",
+        "as_of": "2024-03-01",
+        "retrieval_mode": "exhaustive",
+        "max_output_chars": 8000
+      },
+      "requests": [
+        {
+          "method": "POST",
+          "path": "/retrieve/context",
+          "body": {
+            "query": "board members",
+            "chunk_limit": 0,
+            "as_of": "2024-03-01",
+            "retrieval_mode": "exhaustive",
+            "graph_expansion_limit": 3,
+            "graph_max_depth": 2,
+            "format": "text",
+            "max_tokens": 2000
+          }
+        }
+      ]
+    },
+    {
+      "id": "retrieve_context_json",
+      "tool": "mindgraph_retrieve",
+      "args": {
+        "action": "context",
+        "query": "q",
+        "format": "json",
+        "include_documents": false
+      },
+      "requests": [
+        {
+          "method": "POST",
+          "path": "/retrieve/context",
+          "body": {
+            "query": "q",
+            "chunk_limit": 0,
+            "article_limit": 0,
+            "graph_expansion_limit": 3,
+            "graph_max_depth": 2
+          }
+        }
+      ]
+    },
+    {
+      "id": "retrieve_context_chunks",
+      "tool": "mindgraph_retrieve",
+      "args": {
+        "action": "context",
+        "query": "q",
+        "include_chunks": true,
+        "limit": 4
+      },
+      "requests": [
+        {
+          "method": "POST",
+          "path": "/retrieve/context",
+          "body": {
+            "query": "q",
+            "node_limit": 4,
+            "chunk_limit": 4,
+            "graph_expansion_limit": 3,
+            "graph_max_depth": 2,
+            "format": "text",
+            "max_tokens": 6000
+          }
+        }
+      ]
+    },
+    {
+      "id": "retrieve_text",
+      "tool": "mindgraph_retrieve",
+      "args": {
+        "action": "text",
+        "query": "NATO",
+        "limit": 3,
+        "node_types": [
+          "Claim"
+        ]
+      },
+      "requests": [
+        {
+          "method": "POST",
+          "path": "/retrieve",
+          "body": {
+            "action": "text",
+            "query": "NATO",
+            "limit": 3,
+            "node_types": [
+              "Claim"
+            ],
+            "agent_id": "hermes"
+          }
+        }
+      ]
+    },
+    {
+      "id": "retrieve_hybrid",
+      "tool": "mindgraph_retrieve",
+      "args": {
+        "action": "hybrid",
+        "query": "NATO",
+        "limit": 5,
+        "explain": true
+      },
+      "requests": [
+        {
+          "method": "POST",
+          "path": "/retrieve",
+          "body": {
+            "action": "hybrid",
+            "query": "NATO",
+            "k": 5,
+            "explain": true,
+            "agent_id": "hermes"
+          }
+        }
+      ]
+    },
+    {
+      "id": "retrieve_neighborhood",
+      "tool": "mindgraph_retrieve",
+      "args": {
+        "action": "neighborhood",
+        "start_uid": "n1",
+        "max_depth": 2,
+        "direction": "outgoing",
+        "edge_types": [
+          "SUPPORTS"
+        ]
+      },
+      "requests": [
+        {
+          "method": "POST",
+          "path": "/traverse",
+          "body": {
+            "action": "neighborhood",
+            "start_uid": "n1",
+            "max_depth": 2,
+            "direction": "outgoing",
+            "edge_types": [
+              "SUPPORTS"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "remember",
+      "tool": "mindgraph_remember",
+      "args": {
+        "action": "remember",
+        "text": "Prefers tea",
+        "custom_id": "pref-tea",
+        "label": "Tea"
+      },
+      "requests": [
+        {
+          "method": "POST",
+          "path": "/memory/remember",
+          "body": {
+            "text": "Prefers tea",
+            "custom_id": "pref-tea",
+            "label": "Tea",
+            "agent_id": "hermes"
+          }
+        }
+      ]
+    },
+    {
+      "id": "forget",
+      "tool": "mindgraph_remember",
+      "args": {
+        "action": "forget",
+        "custom_id": "pref-tea",
+        "dry_run": true,
+        "reason": "test"
+      },
+      "requests": [
+        {
+          "method": "POST",
+          "path": "/memory/forget",
+          "body": {
+            "custom_id": "pref-tea",
+            "dry_run": true,
+            "reason": "test",
+            "agent_id": "hermes"
+          }
+        }
+      ]
+    },
+    {
+      "id": "capture_journal",
+      "tool": "mindgraph_capture",
+      "args": {
+        "action": "journal",
+        "label": "Day",
+        "content": "Shipped",
+        "mood": "good",
+        "tags": [
+          "x"
+        ]
+      },
+      "requests": [
+        {
+          "method": "POST",
+          "path": "/memory/session",
+          "body": {
+            "action": "journal",
+            "label": "Day",
+            "props": {
+              "content": "Shipped",
+              "mood": "good",
+              "tags": [
+                "x"
+              ]
+            },
+            "agent_id": "hermes",
+            "idempotency_key": "1da4f13bfaed9ac1db83055adaa68d28abc5f9ae7d88034f393662e199529590"
+          }
+        }
+      ]
+    },
+    {
+      "id": "capture_entity",
+      "tool": "mindgraph_capture",
+      "args": {
+        "action": "entity",
+        "label": "Ada Lovelace",
+        "summary": "Mathematician",
+        "entity_type": "person",
+        "props": {
+          "born": 1815
+        }
+      },
+      "requests": [
+        {
+          "method": "POST",
+          "path": "/reality/entity",
+          "body": {
+            "action": "create",
+            "label": "Ada Lovelace",
+            "props": {
+              "born": 1815,
+              "description": "Mathematician",
+              "entity_type": "person"
+            },
+            "agent_id": "hermes",
+            "idempotency_key": "14962b1d58c4e22721663cd1604f9a97d0a347abf61a523185b6e85c849727fe"
+          }
+        }
+      ]
+    },
+    {
+      "id": "reason_claim",
+      "tool": "mindgraph_reason",
+      "args": {
+        "action": "claim",
+        "claim": {
+          "label": "Tea improves focus",
+          "content": "Measured",
+          "confidence": 0.7
+        },
+        "evidence": [
+          {
+            "label": "Study",
+            "description": "n=20"
+          }
+        ],
+        "warrant": {
+          "label": "Caffeine",
+          "content": "Stimulant"
+        }
+      },
+      "requests": [
+        {
+          "method": "POST",
+          "path": "/epistemic/argument",
+          "body": {
+            "claim": {
+              "label": "Tea improves focus",
+              "confidence": 0.7,
+              "props": {
+                "content": "Measured"
+              }
+            },
+            "evidence": [
+              {
+                "label": "Study",
+                "props": {
+                  "description": "n=20"
+                }
+              }
+            ],
+            "warrant": {
+              "label": "Caffeine",
+              "props": {
+                "content": "Stimulant"
+              }
+            },
+            "agent_id": "hermes",
+            "idempotency_key": "45ee3655781061f0b34f619afb3e6f7ea69e77a765ecb636d62bcbc65ac5c6a2"
+          }
+        }
+      ]
+    },
+    {
+      "id": "commit_goal",
+      "tool": "mindgraph_commit",
+      "args": {
+        "action": "goal",
+        "label": "Ship parity",
+        "summary": "Hermes = MCP",
+        "salience": 0.8
+      },
+      "requests": [
+        {
+          "method": "POST",
+          "path": "/intent/commitment",
+          "body": {
+            "action": "goal",
+            "label": "Ship parity",
+            "summary": "Hermes = MCP",
+            "salience": 0.8,
+            "agent_id": "hermes",
+            "idempotency_key": "84aa6ffefe6572fc2ab4b50ba8c0780be92693b079bcea62216905995fecf69c"
+          }
+        }
+      ]
+    },
+    {
+      "id": "plan_create_task",
+      "tool": "mindgraph_plan",
+      "args": {
+        "action": "create_task",
+        "label": "Port as_of",
+        "summary": "retrieve context",
+        "scope_uids": [
+          "space:x"
+        ]
+      },
+      "requests": [
+        {
+          "method": "POST",
+          "path": "/agent/plan",
+          "body": {
+            "action": "create_task",
+            "label": "Port as_of",
+            "summary": "retrieve context",
+            "scope_uids": [
+              "space:x"
+            ],
+            "agent_id": "hermes"
+          }
+        }
+      ]
+    },
+    {
+      "id": "plan_resume_work",
+      "tool": "mindgraph_plan",
+      "args": {
+        "action": "resume_work",
+        "limit": 5
+      },
+      "requests": [
+        {
+          "method": "POST",
+          "path": "/agent/plan",
+          "body": {
+            "action": "resume_work",
+            "limit": 5,
+            "agent_id": "hermes"
+          }
+        }
+      ]
+    },
+    {
+      "id": "ingest_session",
+      "tool": "mindgraph_ingest",
+      "args": {
+        "action": "session",
+        "content": "user: hi\nassistant: hello",
+        "title": "Chat",
+        "layers": [
+          "epistemic"
+        ]
+      },
+      "requests": [
+        {
+          "method": "POST",
+          "path": "/ingest/session",
+          "body": {
+            "content": "user: hi\nassistant: hello",
+            "title": "Chat",
+            "layers": [
+              "epistemic"
+            ],
+            "agent_id": "hermes"
+          }
+        }
+      ]
+    },
+    {
+      "id": "series_latest",
+      "tool": "mindgraph_series_query",
+      "args": {
+        "action": "latest",
+        "series_uid": "s1"
+      },
+      "requests": [
+        {
+          "method": "POST",
+          "path": "/reality/series",
+          "body": {
+            "action": "latest",
+            "series_uid": "s1",
+            "agent_id": "hermes",
+            "invocation_context": {
+              "harnessSessionId": "hermes-session",
+              "harnessTurnId": "1"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "memory_context_topic",
+      "tool": "mindgraph_memory",
+      "args": {
+        "action": "context",
+        "mode": "topic",
+        "query": "NATO",
+        "limit": 5
+      },
+      "requests": [
+        {
+          "method": "POST",
+          "path": "/retrieve/context",
+          "body": {
+            "query": "NATO",
+            "node_limit": 5,
+            "chunk_limit": 0,
+            "article_limit": 0,
+            "include_graph": true,
+            "graph_expansion_limit": 3,
+            "graph_max_depth": 2
+          }
+        }
+      ]
+    }
+  ]
+}
