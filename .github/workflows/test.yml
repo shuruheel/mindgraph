@@ -41,17 +41,18 @@ jobs:
           repository: NousResearch/hermes-agent
           ref: ${{ env.HERMES_REF }}
           path: .hermes-agent
-      # Hermes's dependency pins are declared for Python 3.14 and later.
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.14"
-      - name: Install Hermes, then the plugin's declared dependencies under Hermes's pins
+      # Installed the way Hermes's own CI does it: the lockfile carries
+      # overrides that a plain pip resolve of pyproject.toml cannot satisfy.
+      - uses: astral-sh/setup-uv@v6
+      - name: Install Hermes from its lockfile
+        working-directory: .hermes-agent
+        run: uv sync --locked --python 3.14
+      - name: Add the plugin's declared dependencies under Hermes's pins
         run: |
-          python -m pip install -e .hermes-agent
-          python -c "import tomllib; print('\n'.join(tomllib.load(open('pyproject.toml','rb'))['project']['dependencies']))" > /tmp/requirements.txt
-          python -m pip install -r /tmp/requirements.txt pytest
+          python3 -c "import tomllib; print('\n'.join(tomllib.load(open('pyproject.toml','rb'))['project']['dependencies']))" > /tmp/requirements.txt
+          uv pip install --python .hermes-agent/.venv/bin/python -r /tmp/requirements.txt pytest
       - name: Run the host suite
         env:
           HERMES_HOST_TESTS: "1"
           PYTHONPATH: ${{ github.workspace }}/.hermes-agent
-        run: python -m pytest tests/host -q
+        run: .hermes-agent/.venv/bin/python -m pytest tests/host -q
