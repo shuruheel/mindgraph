@@ -1,0 +1,54 @@
+# contract-drift — has mindgraph-mcp moved since the checked-in snapshot?
+#
+# mcp_contract.json (tool schemas + instructions) and tests/fixtures/mcp_requests.json
+# (the HTTP requests the MCP's own handlers send) are generated from a
+# mindgraph-mcp release. This regenerates both from the latest `v*` tag and fails
+# when either differs, so a new MCP property or request shape surfaces here
+# instead of as a knob the Hermes model sets and the plugin silently drops.
+# test.yml needs no Node: it runs against the checked-in files.
+name: contract-drift
+
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - mcp_contract.json
+      - "scripts/**"
+      - "handlers_*.py"
+      - memory_tool.py
+      - render.py
+      - "tests/fixtures/**"
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: shuruheel/mindgraph-mcp
+          path: .mindgraph-mcp
+          fetch-depth: 0
+      - name: Check out the latest mindgraph-mcp release tag
+        id: mcp
+        run: |
+          tag=$(git -C .mindgraph-mcp tag -l 'v*' --sort=-v:refname | head -n 1)
+          test -n "$tag" || { echo "::error::no v* tag in shuruheel/mindgraph-mcp"; exit 1; }
+          git -C .mindgraph-mcp checkout --quiet "$tag"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm ci
+        working-directory: .mindgraph-mcp
+      - run: node scripts/sync_from_mcp.mjs .mindgraph-mcp
+      - run: node scripts/gen_mcp_fixtures.mjs .mindgraph-mcp
+      - name: Compare with the checked-in snapshot
+        run: |
+          if ! git diff --exit-code mcp_contract.json tests/fixtures/; then
+            echo "::error::mindgraph-mcp ${{ steps.mcp.outputs.tag }} differs from the checked-in contract/fixtures." \
+              "Run both scripts against that tag, port the handler changes the diff shows, and commit the regenerated files."
+            exit 1
+          fi

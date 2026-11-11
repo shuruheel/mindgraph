@@ -69,6 +69,30 @@ def test_context_explicit_article_limit_wins(runtime, fake_client):
     assert only_call(fake_client, "retrieve_context")[1]["article_limit"] == 2
 
 
+def test_context_forwards_as_of_and_retrieval_mode(runtime, fake_client):
+    h.handle_retrieve(runtime, {
+        "action": "context", "query": "q", "as_of": "2024-03", "retrieval_mode": "exhaustive", "format": "json",
+    })
+    kwargs = only_call(fake_client, "retrieve_context")[1]
+    assert (kwargs["as_of"], kwargs["retrieval_mode"]) == ("2024-03", "exhaustive")
+
+
+def test_context_json_does_not_request_server_text(runtime, fake_client):
+    h.handle_retrieve(runtime, {"action": "context", "query": "q", "format": "json"})
+    kwargs = only_call(fake_client, "retrieve_context")[1]
+    assert "format" not in kwargs and "max_tokens" not in kwargs
+
+
+@pytest.mark.parametrize("max_chars,max_tokens", [(None, 6000), (8001, 2000), (100, 256)])
+def test_context_requests_server_text_with_derived_budget(runtime, fake_client, max_chars, max_tokens):
+    args = {"action": "context", "query": "q"}
+    if max_chars is not None:
+        args["max_output_chars"] = max_chars
+    h.handle_retrieve(runtime, args)
+    kwargs = only_call(fake_client, "retrieve_context")[1]
+    assert (kwargs["format"], kwargs["max_tokens"]) == ("text", max_tokens)
+
+
 def test_context_without_query_errors(runtime, fake_client):
     assert is_error(h.handle_retrieve(runtime, {"action": "context"}))
     assert fake_client.calls == []

@@ -7,7 +7,7 @@ license = { text = "MIT" }
 # Installed into the Hermes environment by `hermes plugins install` / `enable`.
 # Upper bounds keep the plugin resolvable against Hermes's exact pins.
 dependencies = [
-    "mindgraph-sdk>=0.16.0,<0.17",
+    "mindgraph-sdk>=0.17.0,<0.18",
     "httpx>=0.27,<1",
 ]
 
