@@ -32,8 +32,12 @@ jobs:
   host:
     name: real Hermes host
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        hermes: [e06df9c2eae6901f4c88f464e0ae6e753c0428b8, 3b421578588243f920886e6fe79a6faa87ea026e]
     env:
-      HERMES_REF: 78abaafcccec20a546c94e8734a70e38c08a6a69
+      HERMES_REF: ${{ matrix.hermes }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/checkout@v4
