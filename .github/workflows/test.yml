@@ -25,3 +25,32 @@ jobs:
           python -m pip install -r /tmp/requirements.txt pytest ruff==0.15.5
       - run: ruff check .
       - run: python -m pytest -q
+
+  # The plugin inside real Hermes: its loader, MemoryProvider ABC and
+  # MemoryManager, at a pinned commit. Bump HERMES_REF deliberately; a failure
+  # after a bump is an upstream contract change to port, not a flake.
+  host:
+    name: real Hermes host
+    runs-on: ubuntu-latest
+    env:
+      HERMES_REF: 78abaafcccec20a546c94e8734a70e38c08a6a69
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: NousResearch/hermes-agent
+          ref: ${{ env.HERMES_REF }}
+          path: .hermes-agent
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install Hermes, then the plugin's declared dependencies under Hermes's pins
+        run: |
+          python -m pip install -e .hermes-agent
+          python -c "import tomllib; print('\n'.join(tomllib.load(open('pyproject.toml','rb'))['project']['dependencies']))" > /tmp/requirements.txt
+          python -m pip install -r /tmp/requirements.txt pytest
+      - name: Run the host suite
+        env:
+          HERMES_HOST_TESTS: "1"
+          PYTHONPATH: ${{ github.workspace }}/.hermes-agent
+        run: python -m pytest tests/host -q
