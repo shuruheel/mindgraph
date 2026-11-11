@@ -56,3 +56,13 @@ jobs:
           HERMES_HOST_TESTS: "1"
           PYTHONPATH: ${{ github.workspace }}/.hermes-agent
         run: .hermes-agent/.venv/bin/python -m pytest tests/host -q
+      # The admission gate the Hermes catalog runs on a re-pin (manifest, declared
+      # vs registered capabilities, dependency declaration, install scanner),
+      # against the committed tree exactly as the catalog would clone it.
+      - name: Export the committed tree
+        run: |
+          mkdir -p "$RUNNER_TEMP/plugin/mindgraph"
+          git archive HEAD | tar -x -C "$RUNNER_TEMP/plugin/mindgraph"
+      - name: Run Hermes's catalog validator
+        working-directory: .hermes-agent
+        run: .venv/bin/python -m hermes_cli.main plugins validate --install-deps "$RUNNER_TEMP/plugin/mindgraph"
