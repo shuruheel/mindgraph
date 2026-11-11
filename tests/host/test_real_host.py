@@ -192,6 +192,7 @@ def test_a_slash_skill_turn_captures_the_instruction_not_the_skill_body(home, se
 def test_a_follow_up_without_a_subject_recalls_on_the_conversation(home, server):
     manager, _ = boot(home)
     manager.prefetch_all("Let's review the Voya pilot budget", session_id="host-session")
+    manager.on_turn_start(2, "What did we decide?", previous_message="Let's review the Voya pilot budget")
     manager.prefetch_all("What did we decide?", session_id="host-session")
     queries = [body["query"] for body in server.bodies("/retrieve/context")]
     assert queries == ["review voya pilot budget", "decide review voya pilot budget"]
@@ -231,9 +232,12 @@ def test_a_failed_recall_is_retried_by_hermes_background_prefetch(home, server):
     assert manager.prefetch_all("What is the Voya pilot budget?", session_id="host-session") == ""
     manager.queue_prefetch_all("What is the Voya pilot budget?", session_id="host-session")
     assert manager.flush_pending(10)
+    assert server.wait_for(lambda: len(server.bodies("/retrieve/context")) == 3), "the retry ran, on its own thread"
+    time.sleep(0.2)
     assert "Voya pilot budget is $8,000" in manager.prefetch_all(
         "What is the Voya pilot budget?", session_id="host-session"
     )
+    assert len(server.bodies("/retrieve/context")) == 3, "answered from the retry's kept result"
     manager.shutdown_all()
 
 
@@ -288,6 +292,50 @@ def test_a_request_that_landed_but_lost_its_answer_is_not_ingested_twice(home, s
     assert len(server.bodies("/jobs")) == 1
 
 
+def test_a_server_restart_between_the_send_and_the_retry_does_not_duplicate(home, server):
+    manager, _ = boot(home)
+    server.failures["/ingest/session"] = ["drop"]
+    manager.sync_all("Stored, then the server was redeployed.", "ok", session_id="host-session")
+    assert manager.flush_pending(10)
+    manager.on_pre_compress([])
+    server.restart()  # its in-memory job list is gone; the transcript Document is not
+    manager.on_session_end([])
+    manager.shutdown_all()
+    assert len(server.ingested()) == 1
+    assert queue_counts(home) == {"delivered": 1, "open_parts": 0}
+
+
+def test_a_turn_is_committed_while_an_earlier_one_is_still_being_sent(home, server):
+    server.delays["/ingest/session"] = 1.5
+    manager, _ = boot(home)
+    manager.sync_all("x" * 24_000, "A turn big enough to flush on its own.", session_id="host-session")
+    manager.sync_all("The turn right behind it.", "ok", session_id="host-session")
+    started = time.monotonic()
+    assert manager.flush_pending(10)
+    assert time.monotonic() - started < 1.0, "Hermes's one background worker is not held by the send"
+    assert queue_counts(home)["open_parts"] == 2
+    server.delays.clear()
+    manager.on_session_end([])
+    manager.shutdown_all()
+    assert len(server.ingested()) == 2
+
+
+def test_compression_does_not_archive_the_same_turns_under_the_new_session_id(home, server):
+    manager, _ = boot(home, "before-compression")
+    manager.sync_all("Rotate the signing key tonight.", "Scheduled for 23:00.", session_id="before-compression")
+    assert manager.flush_pending(10)
+    manager.on_pre_compress(TRANSCRIPT, evidence_messages=evidence(TRANSCRIPT), require_checkpoint=True)
+    manager.on_session_switch(
+        "after-compression", parent_session_id="before-compression", reset=False, reason="compression"
+    )
+    # The next compression is handed the tail the last one kept verbatim.
+    manager.on_pre_compress(TRANSCRIPT[-1:], evidence_messages=evidence(TRANSCRIPT[-1:]), require_checkpoint=True)
+    manager.on_session_end([])
+    manager.shutdown_all()
+    everything = "\n".join(body["content"] for body in server.ingested())
+    assert everything.count("Scheduled for 23:00.") == 1 and everything.count("Rotate the signing key tonight.") == 1
+
+
 def test_status_tells_the_model_what_is_queued(home, server):
     manager, _ = boot(home)
     server.failures["/ingest/session"] = [503]
@@ -306,6 +354,17 @@ def test_undo_keeps_retracted_turns_from_ever_being_sent(home, server):
     manager.sync_all("My password is hunter2-do-not-store", "Noted.", session_id="host-session")
     assert manager.flush_pending(10)
     manager.on_session_switch("host-session", rewound=True)
+    manager.on_session_end([])
+    manager.shutdown_all()
+    assert server.ingested() == []
+
+
+def test_undo_wins_even_when_hermes_runs_it_before_the_turns_own_sync(home, server):
+    """Hermes calls the rewind hook inline and does not drain its worker first."""
+    manager, _ = boot(home)
+    manager.on_session_switch("host-session", rewound=True)
+    manager.sync_all("My password is hunter2-do-not-store", "Noted.", session_id="host-session")
+    assert manager.flush_pending(10)
     manager.on_session_end([])
     manager.shutdown_all()
     assert server.ingested() == []

@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import sqlite3
 import threading
 import time
 from typing import Any, Iterable, Optional
@@ -40,6 +41,7 @@ from .capture import (
     CaptureError,
     CaptureQueue,
     Deliverer,
+    DeliveryNotSent,
     DeliveryRejected,
     DeliveryUncertain,
     Receipt,
@@ -47,7 +49,7 @@ from .capture import (
 from .dispatch import contract, handle_tool, static_tool_schemas
 from .governance import GovernanceGate
 from .memory_tool import MemoryRuntimeConfig
-from .recall import OVERFETCH, RecallEngine, RecallQuery, load_config
+from .recall import RecallEngine, RecallQuery, load_config
 from .render import render_resume_context
 from .runtime import DEFAULT_AGENT_ID, DEFAULT_BASE_URL, HARNESS, Runtime
 
@@ -69,9 +71,14 @@ FLUSH_CHARS = 24_000
 # Hermes's pre-compress checkpoint contract this provider implements when its
 # queue is on disk. 1 is the best-effort legacy contract.
 CHECKPOINT_API_VERSION = 2
-# A flush point waits this long for delivery. What is still queued afterwards
-# is on disk and goes out at the next flush or the next start.
-FLUSH_BUDGET_S = 20.0
+# How long a boundary hook waits for delivery before it returns. Delivery runs
+# on its own thread and carries on past the wait; whatever is still queued is
+# on disk and goes out at the next flush or the next start. sync_turn never
+# waits: it runs on Hermes's one background worker, behind which later turns
+# queue to be committed.
+FLUSH_WAIT_S = 10.0
+CHECKPOINT_WAIT_S = 5.0
+SHUTDOWN_WAIT_S = 5.0
 # Marker Hermes leaves on a previous compaction's summary row; a summary is
 # derived text, never evidence.
 _COMPRESSED_SUMMARY_KEY = "_compressed_summary"
@@ -123,11 +130,26 @@ def evidence_rows(messages: Iterable[Any]) -> list[tuple[str, str]]:
     return rows
 
 
-def batch_title(batch: Batch, agent_context: str) -> str:
-    """The transcript title. The tag makes a batch findable among the server's
-    jobs, which is how an attempt of unknown outcome is reconciled."""
-    kind = "session" if agent_context == "primary" else f"{agent_context} session"
+def batch_title(batch: Batch) -> str:
+    """The transcript title. The tag makes a batch findable on the server,
+    which is how an attempt of unknown outcome is reconciled. The kind is the
+    agent context that queued the batch, not the one delivering it."""
+    kind = "session" if batch.context == "primary" else f"{batch.context} session"
     return f"Hermes {kind} {batch.session} · {batch.tag}"
+
+
+def _labels(value: Any) -> Iterable[tuple[str, Optional[str]]]:
+    """``(label, uid)`` of every node in a search response, whatever its nesting."""
+    if isinstance(value, list):
+        for item in value:
+            yield from _labels(item)
+    elif isinstance(value, dict):
+        label, uid = value.get("label"), value.get("uid")
+        if isinstance(label, str):
+            yield label, uid if isinstance(uid, str) else None
+        for key in ("node", "results", "nodes", "items"):
+            if key in value:
+                yield from _labels(value[key])
 
 
 class MindGraphMemoryProvider(MemoryProvider):
@@ -274,6 +296,8 @@ class MindGraphMemoryProvider(MemoryProvider):
         if rt is None or recall is None:
             return ""
         session = session_id or rt.session_id
+        if not recall.config.enabled:
+            return ""  # recall off is no automatic injection at all, the brief included
         deadline = time.monotonic() + recall.config.deadline_s
         self._start_brief(session)  # runs beside the recall, not before it
         recalled = recall.recall(session, query or "", previous=self._previous_message)
@@ -287,17 +311,17 @@ class MindGraphMemoryProvider(MemoryProvider):
         return "## MindGraph context (recalled for this message)\n\n" + "\n\n".join(sections)
 
     def queue_prefetch(self, query: str, *, session_id: str = "") -> None:
-        """After a turn, on Hermes's background worker: retry a recall that
-        failed, so the next message has one to fall back on."""
+        """After a turn: retry a recall that failed, on its own thread, so the
+        next message has one to fall back on."""
         if self._rt is not None and self._recall is not None:
-            self._recall.after_turn(session_id or self._rt.session_id, query or "")
+            self._recall.after_turn(session_id or self._rt.session_id)
 
-    def _fetch_recall(self, query: RecallQuery) -> Any:
+    def _fetch_recall(self, query: RecallQuery, candidates: int) -> Any:
         config = self._recall.config
         options = {
             "project_uid": config.project_uid,
-            # The floor discards candidates, so fetch more than will be shown.
-            "node_limit": config.limit * OVERFETCH,
+            # More than will be shown: the floor and repeat suppression discard some.
+            "node_limit": candidates,
             "chunk_limit": 0,
             "article_limit": 0,
             "include_graph": True,
@@ -392,8 +416,9 @@ class MindGraphMemoryProvider(MemoryProvider):
         return uid
 
     def sync_turn(self, user_content: str, assistant_content: str, *, session_id: str = "", **kwargs: Any) -> None:
-        """Runs on Hermes's background worker: one local commit, then delivery
-        of whatever is due."""
+        """One local commit. Delivery is started, never waited for: this runs
+        on Hermes's single background worker, and a turn waiting behind a slow
+        server would not be committed at all if Hermes exited meanwhile."""
         if not self._can_write() or self._capture is None:
             return
         user, assistant = (user_content or "").strip(), (assistant_content or "").strip()
@@ -402,42 +427,65 @@ class MindGraphMemoryProvider(MemoryProvider):
         try:
             # Tagged with the turn's own conversation: a switch may already have
             # rebound the runtime by the time this queued call runs.
-            open_chars = self._capture.add_turn(session_id or self._rt.session_id, user, assistant)
+            open_chars = self._capture.add_turn(
+                session_id or self._rt.session_id, user, assistant, context=self._rt.agent_context
+            )
+            if open_chars >= FLUSH_CHARS:
+                self._capture.seal()
         except CaptureError as exc:
             logger.warning("MindGraph could not queue a turn for capture: %s", exc)
             return
-        if open_chars >= FLUSH_CHARS:
-            self._flush("size")
-        else:
-            self._drain("retry", force=False)  # a batch that was backing off may be due
+        self._drain("turn", force=open_chars >= FLUSH_CHARS, wait_s=0.0)
 
-    def _flush(self, reason: str) -> None:
-        """Seal what is open and deliver. A seal that cannot commit raises:
-        callers that promise durability must not swallow it."""
+    def _flush(self, reason: str, *, wait_s: float) -> None:
+        """Seal what is open, then deliver. The seal is the durable step and
+        raises when it cannot commit; delivery never raises."""
         if self._capture is None:
             return
         self._capture.seal()
-        self._drain(reason, force=True)
+        self._drain(reason, force=True, wait_s=wait_s)
 
-    def _drain(self, reason: str, *, force: bool) -> None:
-        if self._deliverer is None or self._rt is None:
+    def _drain(self, reason: str, *, force: bool, wait_s: float) -> None:
+        """Deliver on a thread of the provider's own and wait at most ``wait_s``
+        for it. A caller is never held longer than that by a slow server."""
+        deliverer, capture = self._deliverer, self._capture
+        if deliverer is None or capture is None or self._rt is None:
             return
-        result = self._deliverer.drain(force=force, budget_s=FLUSH_BUDGET_S)
-        if result.delivered or result.reconciled or result.parked:
-            logger.debug(
-                "MindGraph capture (%s): %d delivered, %d reconciled, %d parked%s",
-                reason, result.delivered, result.reconciled, result.parked,
-                f"; stopped: {result.blocked}" if result.blocked else "",
-            )
+        try:
+            if not capture.due(force=force):
+                return
+        except CaptureError as exc:
+            logger.debug("MindGraph capture queue unreadable (%s): %s", reason, exc)
+            return
+
+        def run() -> None:
+            try:
+                result = deliverer.drain(force=force)
+            except Exception as exc:  # a delivery thread must never die loudly
+                logger.warning("MindGraph capture delivery failed (%s; kept on disk): %s", reason, exc)
+                return
+            if result.delivered or result.reconciled or result.parked:
+                logger.debug(
+                    "MindGraph capture (%s): %d delivered, %d reconciled, %d parked%s",
+                    reason, result.delivered, result.reconciled, result.parked,
+                    f"; stopped: {result.blocked}" if result.blocked else "",
+                )
+
+        thread = spawn_context_thread(run, name="mindgraph-capture")
+        thread.start()
+        if wait_s > 0:
+            thread.join(wait_s)
 
     def _send_batch(self, batch: Batch) -> Receipt:
         rt = self._rt
         try:
+            session_uid = self._ensure_session(batch.session)
+        except Exception as exc:
+            # Nothing was sent. The transcript is not at fault, so it is retried, not parked.
+            raise DeliveryNotSent(f"could not open the MindGraph session: {exc}") from exc
+        try:
             response = rt.client.ingest_session(
-                batch.content,
-                title=batch_title(batch, rt.agent_context),
-                session_uid=self._ensure_session(batch.session),
-                agent_id=rt.agent_id,
+                batch.content, title=batch_title(batch), session_uid=session_uid, agent_id=rt.agent_id
             )
         except MindGraphError as exc:
             status = exc.status or 0
@@ -445,15 +493,17 @@ class MindGraphMemoryProvider(MemoryProvider):
                 # The cached Session is gone on the server; the next attempt reopens it.
                 with self._lock:
                     self._mg_sessions.pop(batch.session, None)
-                raise
+                raise DeliveryNotSent(str(exc)) from exc
             if status >= 500:
                 raise DeliveryUncertain(str(exc)) from exc
             if status in (401, 403, 408, 409, 425, 429):
-                raise  # credentials, a policy or load: a later attempt may pass
+                # Credentials, a policy or load, answered before any write: a later attempt may pass.
+                raise DeliveryNotSent(str(exc)) from exc
             raise DeliveryRejected(str(exc)) from exc
-        except httpx.ConnectError:
-            raise  # never reached the server
-        except httpx.TransportError as exc:
+        except httpx.ConnectError as exc:
+            raise DeliveryNotSent(f"{type(exc).__name__}: {exc}") from exc
+        except Exception as exc:
+            # A timeout, a dropped connection, an answer that is not JSON: it may have landed.
             raise DeliveryUncertain(f"{type(exc).__name__}: {exc}") from exc
         receipt = response if isinstance(response, dict) else {}
         document = receipt.get("document_uid") or receipt.get("doc_uid")
@@ -464,20 +514,31 @@ class MindGraphMemoryProvider(MemoryProvider):
         )
 
     def _find_batch(self, batch: Batch) -> Optional[Receipt]:
-        """Whether an attempt of unknown outcome landed: its tag is in the title
-        of the job the server created for it."""
+        """Whether an attempt of unknown outcome landed. The batch's tag is in
+        the title of the job the server created, and of the transcript Document.
+        The job list is quick but forgets (it lives in memory, 24 hours at
+        most); the Document is durable, so it has the last word."""
+        client = self._rt.client
         try:
-            jobs = self._rt.client.list_jobs()
+            jobs = client.list_jobs()
         except MindGraphError as exc:
-            if 400 <= (exc.status or 0) < 500 and exc.status not in (408, 425, 429):
-                # This credential cannot list jobs, so nothing can be verified.
-                # Resend: a possible duplicate is the lesser loss.
-                return None
-            raise
+            if not _refused(exc):
+                raise
+            jobs = []  # this credential cannot list jobs; the Document search still can tell
         for job in jobs if isinstance(jobs, list) else []:
             if isinstance(job, dict) and batch.tag in str(job.get("title") or ""):
                 job_id = job.get("id") or job.get("job_id")
                 return Receipt(job_id=job_id if isinstance(job_id, str) else None)
+        try:
+            found = client.retrieve(action="text", query=batch.tag, node_types=["Document"], limit=5)
+        except MindGraphError as exc:
+            if _refused(exc):
+                # Nothing here can verify. Resend: a possible duplicate is the lesser loss.
+                return None
+            raise
+        for label, uid in _labels(found):
+            if batch.tag in label:
+                return Receipt(document_uid=uid)
         return None
 
     def _recover_capture(self) -> None:
@@ -487,11 +548,11 @@ class MindGraphMemoryProvider(MemoryProvider):
             return
         try:
             capture.prune()
-            # Parked batches get one more attempt per process: the reason they
+            # Parked batches get another round per process: the reason they
             # were refused (a key, a policy, a server bug) may be gone.
             requeued = capture.retry_failed()
             leftover = capture.status()
-        except CaptureError as exc:
+        except (CaptureError, sqlite3.Error) as exc:
             logger.warning("MindGraph capture queue could not be read at startup: %s", exc)
             return
         if not (requeued or leftover["pending_batches"] or leftover["buffered_parts"]):
@@ -499,7 +560,8 @@ class MindGraphMemoryProvider(MemoryProvider):
 
         def recover() -> None:
             try:
-                self._flush("recovery")
+                capture.seal()
+                self._deliverer.drain(force=True)
             except Exception as exc:
                 logger.warning("MindGraph capture recovery failed (kept on disk): %s", exc)
 
@@ -530,12 +592,12 @@ class MindGraphMemoryProvider(MemoryProvider):
     def on_pre_compress(self, messages: list[dict[str, Any]], *, require_checkpoint: bool = False) -> str:
         """Checkpoint before a lossy rewrite.
 
-        Always: seal the queued turns and deliver them. With
+        Always: seal the queued turns and start delivering them. With
         ``require_checkpoint`` (the operator's ``compression.checkpoint_required``)
         the transcript rows themselves are committed first, in any agent
         context, and a commit that fails raises so Hermes keeps the transcript.
         Success means committed to the profile's queue on disk; delivery to
-        MindGraph follows at least once."""
+        MindGraph follows at least once and never decides the outcome here."""
         rt, capture = self._rt, self._capture
         if rt is not None and self._recall is not None:
             # The turns being compressed carried earlier recall with them.
@@ -550,8 +612,8 @@ class MindGraphMemoryProvider(MemoryProvider):
             if require_checkpoint:
                 if not capture.durable:
                     raise CaptureError("the capture queue is in memory only")
-                capture.add_evidence(rt.session_id, evidence_rows(messages))
-            self._flush("pre-compress")
+                capture.add_evidence(rt.session_id, evidence_rows(messages), context=rt.agent_context)
+            self._flush("pre-compress", wait_s=CHECKPOINT_WAIT_S)
         except CaptureError:
             if require_checkpoint:
                 raise
@@ -609,32 +671,48 @@ class MindGraphMemoryProvider(MemoryProvider):
                 else:
                     if dropped:
                         logger.info("MindGraph dropped %d undelivered transcript rows after an undo", dropped)
+            if self._recall is not None:
+                self._recall.rewound(new_session_id)
             return
         if new_session_id == rt.session_id:
             return
         previous = rt.session_id
-        self._flush_quietly("session switch")
+        self._flush_quietly("session switch", FLUSH_WAIT_S)
+        if self._capture is not None and not reset and kwargs.get("reason") != "resume":
+            # The same conversation under a new id (compression, a branch):
+            # what was captured under the old id is not captured again.
+            try:
+                self._capture.carry_ledger(previous, new_session_id)
+            except CaptureError as exc:
+                logger.debug("MindGraph could not carry the capture ledger across a session switch: %s", exc)
         if self._recall is not None:
             if reset:
                 self._recall.drop(previous)
-            else:  # the same conversation under a new id (compression, /resume, /branch)
+            elif kwargs.get("reason") == "compression":
+                # The same conversation under a new id: it keeps what it was
+                # shown and is not briefed on open work a second time.
                 self._recall.rebind(previous, new_session_id)
+                with self._lock:
+                    if previous in self._briefed_sessions:
+                        self._briefed_sessions.add(new_session_id)
+            # /resume and /branch open a different conversation: it starts with
+            # no recall state, and the one left behind keeps its own.
         with self._lock:
             rt.session_id = new_session_id
             rt.turn_number = 0
         self._close_sessions(only=previous)
 
     def on_session_end(self, messages: list[dict[str, Any]]) -> None:
-        self._flush_quietly("session end")
+        self._flush_quietly("session end", FLUSH_WAIT_S)
         self._close_sessions()
 
-    def _flush_quietly(self, reason: str) -> None:
+    def _flush_quietly(self, reason: str, wait_s: float) -> None:
         """A flush at a boundary that promises nothing: what cannot be sealed or
         sent stays queued."""
         if not self._can_write():
             return
         try:
-            self._flush(reason)
+            self._flush(reason, wait_s=wait_s)
         except CaptureError as exc:
             logger.warning("MindGraph capture flush failed (%s; kept for the next flush): %s", reason, exc)
 
@@ -655,7 +733,7 @@ class MindGraphMemoryProvider(MemoryProvider):
                 logger.debug("MindGraph session close failed (non-fatal): %s", exc)
 
     def shutdown(self) -> None:
-        self._flush_quietly("shutdown")
+        self._flush_quietly("shutdown", SHUTDOWN_WAIT_S)
         self._close_sessions()
         if self._capture is not None:
             self._capture.close()
@@ -675,3 +753,9 @@ class MindGraphMemoryProvider(MemoryProvider):
         if self._rt is None or self._memory_config is None:
             return '{"error":"MindGraph provider is not initialized"}'
         return handle_tool(self._rt, self._gate, self._memory_config, tool_name, args)
+
+
+def _refused(exc: MindGraphError) -> bool:
+    """A 4xx that will not change on a retry (not a timeout or a rate limit)."""
+    status = exc.status or 0
+    return 400 <= status < 500 and status not in (408, 425, 429)

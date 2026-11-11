@@ -238,7 +238,8 @@ def _compact_item(raw: Any, fallback_type: Optional[str] = None) -> Optional[Rec
             "type": fallback_type or _node_type(value),
             "label": _text(value.get("label")) or _text(value.get("document_title")),
             "truth_status": _text(value.get("truth_status")) or _text((_obj(value.get("props")) or {}).get("truth_status")),
-            "superseded": True if value.get("superseded") is True else None,
+            # An object on /retrieve/context (the chain's head), ``true`` elsewhere.
+            "superseded": True if value.get("superseded") else None,
             "currently_valid": False if value.get("currently_valid") is False else None,
             "valid_at_time": False if value.get("valid_at_time") is False else None,
             "retrieval_origin": _text(value.get("retrieval_origin")),

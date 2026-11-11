@@ -18,7 +18,10 @@ from typing import Any, Callable, Optional
 class FakeMindGraph:
     def __init__(self) -> None:
         self.requests: list[tuple[str, str, Any]] = []
+        # Jobs live in the server's memory and are lost when it restarts;
+        # Documents are durable. ``restart()`` models exactly that.
         self.jobs: list[dict[str, Any]] = []
+        self.documents: list[dict[str, Any]] = []
         # What /retrieve/context answers; a callable receives the request body.
         self.context: Any = {"graph": {"nodes": [], "edges": []}, "chunks": [], "articles": []}
         self.work: Any = {"status": "no_eligible_work"}
@@ -53,7 +56,12 @@ class FakeMindGraph:
     def ingested(self) -> list[dict[str, Any]]:
         """Transcripts the server accepted (a failed request created nothing)."""
         with self._lock:
-            return [dict(job["request"]) for job in self.jobs]
+            return [dict(document["request"]) for document in self.documents]
+
+    def restart(self) -> None:
+        """A deploy: the in-memory job list is gone, the graph is not."""
+        with self._lock:
+            self.jobs.clear()
 
     def wait_for(self, predicate: Callable[[], bool], timeout: float = 10.0) -> bool:
         deadline = time.monotonic() + timeout
@@ -75,22 +83,29 @@ class FakeMindGraph:
             return 200, {}
         if path == "/ingest/session":
             with self._lock:
-                job = {
-                    "id": f"job-{len(self.jobs) + 1}",
-                    "title": f"Session Transcript: {(body or {}).get('title')}",
-                    "status": "completed",
-                    "request": body,
-                }
+                number = len(self.documents) + 1
+                title = f"Session Transcript: {(body or {}).get('title')}"
+                self.documents.append({"uid": f"doc-{number}", "label": title, "request": body})
+                job = {"id": f"job-{number}", "title": title, "status": "completed"}
                 self.jobs.append(job)
-            return 200, {"job_id": job["id"], "document_uid": f"doc-{len(self.jobs)}"}
+            return 200, {"job_id": job["id"], "document_uid": f"doc-{number}"}
+        if path == "/retrieve" and (body or {}).get("action") == "text":
+            # Keyword search over Document labels, as the real server's FTS does.
+            words = str((body or {}).get("query") or "").lower().split()
+            with self._lock:
+                return 200, [
+                    {"node": {"uid": d["uid"], "label": d["label"], "node_type": "Document"}, "score": 1.0}
+                    for d in self.documents
+                    if any(word in d["label"].lower() for word in words)
+                ]
         if path == "/jobs" and method == "GET":
             with self._lock:
-                return 200, [{k: v for k, v in job.items() if k != "request"} for job in self.jobs]
+                return 200, [dict(job) for job in self.jobs]
         if path.startswith("/jobs/") and method == "GET":
             with self._lock:
                 for job in self.jobs:
                     if job["id"] == path.rsplit("/", 1)[1]:
-                        return 200, {k: v for k, v in job.items() if k != "request"}
+                        return 200, dict(job)
             return 404, {"error": "job not found", "code": "not_found"}
         if path == "/retrieve/context":
             return 200, self.context(body) if callable(self.context) else self.context

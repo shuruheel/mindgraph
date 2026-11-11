@@ -154,9 +154,19 @@ def test_turns_are_buffered_and_ingested_once(secrets):
     assert [kw["action"] for _, kw in fake.called("session")] == ["open", "close"]
 
 
+def settle() -> None:
+    """Wait for the provider's own delivery threads."""
+    import threading
+
+    for thread in threading.enumerate():
+        if thread.name.startswith("mindgraph-"):
+            thread.join(5)
+
+
 def test_a_large_buffer_flushes_without_waiting_for_session_end(secrets):
     provider, fake = make_provider(secrets)
     provider.sync_turn("x" * provider_mod.FLUSH_CHARS, "ok", session_id="hermes-sess")
+    settle()
     assert len(fake.called("ingest_session")) == 1
 
 

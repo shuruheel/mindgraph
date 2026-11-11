@@ -15,6 +15,7 @@ from hermes_mindgraph_plugin.capture import (
     CaptureError,
     CaptureQueue,
     Deliverer,
+    DeliveryNotSent,
     DeliveryRejected,
     DeliveryUncertain,
     Receipt,
@@ -176,12 +177,160 @@ def test_the_bound_drops_oldest_undelivered_batches_and_says_so(queue, monkeypat
 def test_a_parked_batch_keeps_its_text_and_returns_on_request(queue):
     queue.add_turn("s", "refused", "ok")
     (batch_id,) = queue.seal()
+    queue.claim(force=True)
     queue.mark_failed(batch_id, "400 bad request")
     assert queue.claim(force=True) is None
     assert queue.status()["failed_batches"] == 1
     assert queue.status()["last_error"]["state"] == "parked"
     assert queue.retry_failed() == 1
     assert "refused" in queue.claim(force=True).content
+
+
+def test_claiming_marks_the_batch_possibly_sent_before_any_request(tmp_path, clock, queue):
+    queue.add_turn("s", "sent, then the process died", "ok")
+    queue.seal()
+    first = queue.claim(force=True)
+    assert first.uncertain is False, "nothing has been sent yet"
+    queue.close()  # killed after the POST, before any bookkeeping
+    clock.now += capture_mod.LEASE_S + 1
+    again = reopen(tmp_path, clock).claim(force=True)
+    assert again.uncertain is True, "the next attempt must look before it sends"
+
+
+def test_a_failure_that_certainly_did_not_land_clears_the_mark(queue):
+    queue.add_turn("s", "refused connection", "ok")
+    queue.seal()
+    batch = queue.claim(force=True)
+    queue.mark_retry(batch.batch_id, "connection refused", uncertain=False)
+    assert queue.claim(force=True).uncertain is False
+
+
+def test_a_parked_batch_remembers_that_an_attempt_may_have_landed(queue):
+    queue.add_turn("s", "timed out ten times", "ok")
+    (batch_id,) = queue.seal()
+    queue.claim(force=True)
+    queue.mark_failed(batch_id, "gave up", uncertain=True)
+    queue.retry_failed()
+    assert queue.claim(force=True).uncertain is True
+
+
+def test_batches_sealed_in_the_same_instant_leave_in_turn_order(queue):
+    for index, text in enumerate(["alpha", "beta", "gamma", "delta", "epsilon", "zeta"]):
+        queue.add_turn(f"s{index}", text, "ok")
+    queue.seal()  # one seal, one timestamp, six batches
+    order = []
+    while (batch := queue.claim(force=True)) is not None:
+        order.append(batch.session)
+        queue.mark_delivered(batch.batch_id, Receipt())
+    assert order == [f"s{index}" for index in range(6)], "never by the hash of their content"
+
+
+def test_a_long_conversation_split_into_chunks_stays_in_order(queue, monkeypatch):
+    monkeypatch.setattr(capture_mod, "MAX_BATCH_CHARS", 30)
+    for index in range(8):
+        queue.add_turn("s", f"turn number {index} of eight", "")
+    queue.seal()
+    seen_order = []
+    while (batch := queue.claim(force=True)) is not None:
+        seen_order.append(batch.content)
+        queue.mark_delivered(batch.batch_id, Receipt())
+    assert seen_order == [f"User: turn number {index} of eight" for index in range(8)]
+
+
+def test_a_sender_whose_lease_was_taken_over_cannot_undo_the_new_holders_work(tmp_path, clock, queue):
+    queue.add_turn("s", "slow send", "ok")
+    (batch_id,) = queue.seal()
+    queue.claim(force=True)  # process A starts a send that outlives its lease
+    clock.now += capture_mod.LEASE_S + 1
+    other = reopen(tmp_path, clock)
+    taken = other.claim(force=True)
+    other.mark_delivered(taken.batch_id, Receipt(job_id="job-b"))
+    queue.mark_failed(batch_id, "A's late verdict")
+    queue.mark_retry(batch_id, "A's late verdict", uncertain=True)
+    assert other.status()["delivered_batches"] == 1 and other.status()["failed_batches"] == 0
+    assert queue.retry_failed() == 0 and queue.claim(force=True) is None, "no empty transcript comes back"
+
+
+def test_a_commit_that_fails_does_not_wedge_the_queue(queue):
+    real = queue._db
+
+    class FailingCommit:
+        def __init__(self) -> None:
+            self.failed = False
+
+        def execute(self, sql, *args):
+            if sql == "COMMIT" and not self.failed:
+                self.failed = True
+                raise sqlite3.OperationalError("disk I/O error")
+            return real.execute(sql, *args)
+
+        def __getattr__(self, name):
+            return getattr(real, name)
+
+    queue._db = FailingCommit()
+    with pytest.raises(CaptureError):
+        queue.add_turn("s", "lost to the failed commit", "ok")
+    queue.add_turn("s", "the next turn still commits", "ok")
+    queue.seal()
+    assert "the next turn still commits" in queue.claim(force=True).content
+
+
+def test_delivered_text_is_not_left_in_the_file(tmp_path, queue):
+    queue.add_turn("s", "PASSWORD-hunter2-" + "z" * 3000, "ok")
+    (batch_id,) = queue.seal()
+    queue.claim(force=True)
+    queue.mark_delivered(batch_id, Receipt(job_id="j"))
+    queue._db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    folder = tmp_path / "profile" / "mindgraph"
+    assert all(b"PASSWORD-hunter2" not in path.read_bytes() for path in folder.iterdir())
+
+
+def test_an_undone_turn_still_in_hermes_queue_is_not_captured_when_it_arrives(queue, clock):
+    queue.add_turn("s", "kept before the undo?", "ok")
+    queue.discard_session("s")
+    queue.add_turn("s", "retracted, arriving late", "noted")  # queued before the undo, run after it
+    assert queue.status()["buffered_parts"] == 0
+    clock.now += capture_mod.UNDO_GRACE_S + 1
+    queue.add_turn("s", "a real new turn", "ok")
+    status = queue.status()
+    assert status["buffered_parts"] == 2 and status["undo_discarded_parts"] == 4
+
+
+def test_a_conversation_renamed_by_compression_keeps_its_ledger(queue):
+    queue.add_turn("before", "tail question", "tail answer")
+    queue.add_evidence("before", [("user", "asked mid-turn")])
+    queue.carry_ledger("before", "after")
+    assert queue.add_evidence("after", [("user", "tail question"), ("assistant", "tail answer")]) == 0
+    queue.add_turn("after", "asked mid-turn", "its answer")
+    queue.seal()
+    contents = []
+    while (batch := queue.claim(force=True)) is not None:
+        contents.append(batch.content)
+        queue.mark_delivered(batch.batch_id, Receipt())
+    assert "\n".join(contents).count("asked mid-turn") == 1
+
+
+def test_a_checkpoints_claim_on_a_turn_lapses_if_the_turn_never_completes(queue, clock):
+    queue.add_evidence("s", [("user", "retry this")])  # the turn is then interrupted: no sync_turn
+    clock.now += capture_mod.PREPAID_TTL_S + 1
+    queue.add_turn("s", "retry this", "done this time")
+    queue.seal()
+    contents = []
+    while (batch := queue.claim(force=True)) is not None:
+        contents.append(batch.content)
+        queue.mark_delivered(batch.batch_id, Receipt())
+    everything = "\n".join(contents)
+    assert "Assistant: done this time" in everything
+    assert everything.count("User: retry this") == 2, "the interrupted attempt and the retry are both kept"
+
+
+def test_each_batch_carries_the_agent_context_that_queued_it(queue):
+    queue.add_turn("main", "a primary turn", "ok")
+    queue.add_evidence("fork", [("user", "a fork's evidence")], context="subagent")
+    queue.seal()
+    first = queue.claim(force=True)
+    queue.mark_delivered(first.batch_id, Receipt())
+    assert (first.context, queue.claim(force=True).context) == ("primary", "subagent")
 
 
 def test_pruning_forgets_old_receipts_but_never_undelivered_text(queue, clock):
@@ -299,7 +448,7 @@ def test_a_drain_delivers_everything_in_order(queue, server):
 
 def test_a_failure_stops_the_drain_and_keeps_every_batch(queue, server):
     loaded(queue, "one", "two")
-    server.script = [RuntimeError("connection refused")]
+    server.script = [DeliveryNotSent("connection refused")]
     result = Deliverer(queue, server.send, server.find).drain(force=True)
     assert result.delivered == 0 and "connection refused" in result.blocked
     assert queue.status()["pending_batches"] == 2
@@ -329,11 +478,48 @@ def test_an_attempt_that_did_not_land_is_sent_again(queue, server):
 
 def test_a_certain_failure_is_resent_without_asking_the_server(queue, server):
     loaded(queue, "never connected")
-    server.script = [RuntimeError("connection refused")]
+    server.script = [DeliveryNotSent("connection refused")]
     deliverer = Deliverer(queue, server.send, server.find)
     deliverer.drain(force=True)
     deliverer.drain(force=True)
     assert server.finds == 0
+
+
+def test_a_failure_nobody_can_classify_is_looked_up_before_resending(queue, server):
+    loaded(queue, "answered with something unreadable")
+    server.script = [ValueError("Expecting value: line 1 column 1")]
+    deliverer = Deliverer(queue, server.send, server.find)
+    deliverer.drain(force=True)
+    server.jobs.append(server.sent[0].tag)
+    assert deliverer.drain(force=True).reconciled == 1 and len(server.sent) == 1
+
+
+def test_a_batch_whose_earlier_attempt_can_never_be_verified_is_parked_not_left_blocking(queue, server):
+    loaded(queue, "unverifiable", "healthy")
+    server.script = [DeliveryUncertain("timeout")]
+
+    def lookup_down(batch):
+        raise RuntimeError("jobs unavailable")
+
+    deliverer = Deliverer(queue, server.send, lookup_down)
+    for _ in range(capture_mod.MAX_ATTEMPTS + 1):
+        deliverer.drain(force=True)
+    status = queue.status()
+    assert status["failed_batches"] == 1 and status["delivered_batches"] == 1, "the batch behind it got through"
+    queue.retry_failed()
+    assert queue.claim(force=True).uncertain is True, "and it is still looked up before any resend"
+
+
+def test_a_queue_failure_after_the_send_is_not_a_blind_resend(queue, server):
+    loaded(queue, "sent; the bookkeeping failed")
+    deliverer = Deliverer(queue, server.send, server.find)
+    original = queue.mark_delivered
+    queue.mark_delivered = lambda *args: (_ for _ in ()).throw(CaptureError("database is locked"))
+    result = deliverer.drain(force=True)
+    assert "database is locked" in result.blocked and len(server.sent) == 1
+    queue.mark_delivered = original
+    server.jobs.append(server.sent[0].tag)
+    assert deliverer.drain(force=True).reconciled == 1 and len(server.sent) == 1
 
 
 def test_when_the_earlier_attempt_cannot_be_verified_nothing_is_resent_yet(queue, server):
@@ -356,7 +542,7 @@ def test_a_rejected_batch_is_parked_and_the_queue_moves_on(queue, server):
 def test_a_batch_that_keeps_failing_is_parked_so_it_cannot_block_forever(queue, server, clock):
     loaded(queue, "poison", "healthy")
     deliverer = Deliverer(queue, server.send, server.find)
-    server.script = [RuntimeError("500")] * capture_mod.MAX_ATTEMPTS
+    server.script = [DeliveryNotSent("401")] * capture_mod.MAX_ATTEMPTS
     for _ in range(capture_mod.MAX_ATTEMPTS):
         deliverer.drain(force=True)
     status = queue.status()
@@ -404,12 +590,12 @@ def start(home, *, session_id="hermes-sess", client=None, **kwargs):
     return provider, fake
 
 
-def settle(provider) -> None:
-    """Wait for a startup recovery thread, if one was started."""
+def settle(provider=None) -> None:
+    """Wait for the provider's own threads (delivery, startup recovery)."""
     import threading
 
     for thread in threading.enumerate():
-        if thread.name == "mindgraph-capture-recovery":
+        if thread.name.startswith("mindgraph-capture"):
             thread.join(5)
 
 
@@ -456,6 +642,111 @@ def test_a_timeout_that_landed_is_not_ingested_twice(secrets, home):
     provider.on_session_end([])
     assert len(fake.called("ingest_session")) == 1
     assert provider._capture.status()["last_delivery"]["job_id"] == "job-77"
+
+
+def test_a_batch_the_job_list_forgot_is_found_by_its_document(secrets, home):
+    """A deploy empties the in-memory job list; the transcript Document is still there."""
+    provider, fake = start(home)
+    fake.responses["ingest_session"] = httpx.ReadTimeout("timed out")
+    provider.sync_turn("stored before the restart", "ok", session_id="hermes-sess")
+    provider.on_pre_compress([])
+    title = fake.called("ingest_session")[0][1]["title"]
+
+    fake.responses["ingest_session"] = {"job_id": "never-called"}
+    fake.responses["list_jobs"] = []
+    fake.responses["retrieve"] = [{"node": {"uid": "doc-5", "label": f"Session Transcript: {title}"}, "score": 0.9}]
+    provider.on_session_end([])
+    assert len(fake.called("ingest_session")) == 1
+    assert provider._capture.status()["last_delivery"]["document_uid"] == "doc-5"
+    (search,) = fake.called("retrieve")
+    assert search[1]["node_types"] == ["Document"] and search[1]["query"] in title
+
+
+def test_a_process_killed_after_the_send_does_not_send_again(secrets, home):
+    crashed, fake = start(home)
+    crashed.sync_turn("sent, then killed", "ok", session_id="hermes-sess")
+    crashed._capture.mark_delivered = lambda *args: (_ for _ in ()).throw(SystemExit("killed"))
+    crashed._capture.seal()
+    with pytest.raises(SystemExit):
+        crashed._deliverer.drain(force=True)
+    title = fake.called("ingest_session")[0][1]["title"]
+    crashed._capture.close()
+
+    fresh = FakeClient()
+    fresh.responses["list_jobs"] = [{"id": "job-1", "title": f"Session Transcript: {title}"}]
+    survivor, _ = start(home, session_id="next", client=fresh)
+    settle()
+    # The dead process's lease has not expired yet, so nothing is touched until it does.
+    assert fresh.called("ingest_session") == []
+    survivor._capture._clock = lambda: __import__("time").time() + capture_mod.LEASE_S + 1
+    survivor.on_session_end([])
+    assert fresh.called("ingest_session") == [], "found on the server, so not sent a second time"
+    assert survivor._capture.status()["delivered_batches"] == 1
+
+
+def test_a_session_that_cannot_be_opened_delays_the_transcript_and_does_not_park_it(secrets, home):
+    provider, fake = start(home)
+    fake.responses["session"] = MindGraphError("bad session", 400, {"code": "invalid_request"})
+    provider.sync_turn("waiting on its session", "ok", session_id="hermes-sess")
+    provider.on_pre_compress([])
+    queue = provider._capture.status()
+    assert queue["pending_batches"] == 1 and queue["failed_batches"] == 0
+    assert fake.called("ingest_session") == [] and fake.called("list_jobs") == []
+
+
+def test_sync_turn_does_not_wait_on_a_slow_server(secrets, home):
+    import threading
+    import time
+
+    provider, fake = start(home)
+    release = threading.Event()
+    fake.responses["ingest_session"] = lambda *a, **k: release.wait(5) and {"job_id": "j1"}
+    started = time.monotonic()
+    provider.sync_turn("x" * provider_mod.FLUSH_CHARS, "ok", session_id="hermes-sess")
+    provider.sync_turn("the next turn", "ok", session_id="hermes-sess")
+    assert time.monotonic() - started < 1.0, "Hermes's worker is free for the next turn"
+    assert provider._capture.status()["buffered_parts"] == 2, "which is committed while the first is still sending"
+    release.set()
+    settle()
+    assert len(fake.called("ingest_session")) == 1
+
+
+def test_a_turn_the_checkpoint_archived_is_not_resent_after_compression_renames_the_session(secrets, home):
+    provider, fake = start(home)
+    provider.sync_turn("an earlier turn", "its answer", session_id="hermes-sess")
+    transcript = [
+        {"role": "user", "content": "an earlier turn"},
+        {"role": "assistant", "content": "its answer"},
+        {"role": "user", "content": "the question compression interrupted"},
+    ]
+    provider.on_pre_compress(transcript, require_checkpoint=True)
+    provider.on_session_switch("hermes-sess-2", parent_session_id="hermes-sess", reset=False, reason="compression")
+    provider.sync_turn("the question compression interrupted", "answered", session_id="hermes-sess-2")
+    # The next compression is handed the turns the last one kept verbatim.
+    provider.on_pre_compress(
+        [{"role": "user", "content": "the question compression interrupted"}, {"role": "assistant", "content": "answered"}],
+        require_checkpoint=True,
+    )
+    provider.on_session_end([])
+    everything = "\n".join(args[0] for args, _ in fake.called("ingest_session"))
+    assert everything.count("the question compression interrupted") == 1
+    assert everything.count("an earlier turn") == 1 and everything.count("answered") == 1
+
+
+def test_an_undone_turn_that_arrives_after_the_undo_is_never_sent(secrets, home):
+    provider, fake = start(home)
+    provider.on_session_switch("hermes-sess", rewound=True)
+    provider.sync_turn("retracted", "noted", session_id="hermes-sess")  # was queued behind the undo
+    provider.on_session_end([])
+    assert fake.called("ingest_session") == []
+    assert provider._capture.status()["undo_discarded_parts"] == 2
+
+
+def test_a_required_checkpoint_is_not_failed_by_delivery(secrets, home):
+    provider, fake = start(home)
+    provider._deliverer.drain = lambda **_: (_ for _ in ()).throw(CaptureError("database is locked"))
+    provider.on_pre_compress([{"role": "user", "content": "committed evidence"}], require_checkpoint=True)
+    assert provider._capture.status()["pending_batches"] == 1, "committed; compression may go ahead"
 
 
 def test_a_refused_connection_is_retried_without_a_lookup(secrets, home):

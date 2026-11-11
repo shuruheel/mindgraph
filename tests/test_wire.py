@@ -55,6 +55,17 @@ def test_a_server_error_is_retried_and_delivered_once(provider, server):
     provider.on_session_end([])
     assert len(server.ingested()) == 1
     assert len(server.bodies("/ingest/session")) == 2 and len(server.bodies("/jobs")) == 1
+    assert len(server.bodies("/retrieve")) == 1, "the job list had nothing, so the Documents were searched too"
+
+
+def test_a_batch_stored_before_a_server_restart_is_found_by_its_document(provider, server):
+    server.failures["/ingest/session"] = ["drop"]
+    provider.sync_turn("Stored, then the server restarted.", "ok", session_id="wire-session")
+    provider.on_pre_compress([])
+    server.restart()  # the job list is gone
+    provider.on_session_end([])
+    assert len(server.ingested()) == 1, "not ingested a second time"
+    assert provider._capture.status()["last_delivery"]["document_uid"] == "doc-1"
 
 
 def test_a_rejected_batch_is_parked_and_reported(provider, server):
