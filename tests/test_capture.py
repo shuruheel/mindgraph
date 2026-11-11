@@ -630,6 +630,43 @@ def test_an_outage_delays_capture_and_recovery_delivers_it_in_order(secrets, hom
     assert len(fresh.called("list_jobs")) == 1, "only the batch a 503 answered is checked before resending"
 
 
+class KeyedClient(FakeClient):
+    """An SDK newer than 0.17.0: ``ingest_session`` has the idempotency argument."""
+
+    def ingest_session(self, content, *, title=None, session_uid=None, agent_id=None, idempotency_key=None):
+        kwargs = {"title": title, "session_uid": session_uid, "agent_id": agent_id, "idempotency_key": idempotency_key}
+        self.calls.append(("ingest_session", (content,), kwargs))
+        reply = self.responses.get("ingest_session", {})
+        if isinstance(reply, BaseException):
+            raise reply
+        return reply(content, **kwargs) if callable(reply) else reply
+
+
+def test_a_resend_carries_the_same_idempotency_key_and_accepts_the_replay(secrets, home):
+    provider, fake = start(home, client=KeyedClient())
+    fake.responses["ingest_session"] = httpx.ReadTimeout("timed out")
+    provider.sync_turn("slow but successful", "ok", session_id="hermes-sess")
+    provider.on_pre_compress([])
+
+    # Neither lookup finds the tag, so the batch is sent again. The server
+    # recognises the key and answers with the transcript it already stored.
+    fake.responses["ingest_session"] = {"job_id": "", "document_uid": "doc-1", "deduplicated": True}
+    provider.on_session_end([])
+    first, second = (kwargs["idempotency_key"] for _, kwargs in fake.called("ingest_session"))
+    assert first == second and first.startswith("hermes:") and len(first) == len("hermes:") + 64
+    delivery = provider._capture.status()["last_delivery"]
+    assert delivery["document_uid"] == "doc-1" and not delivery.get("job_id")
+    assert provider._capture.status()["pending_batches"] == 0
+
+
+def test_an_sdk_without_the_idempotency_argument_is_not_given_one(secrets, home):
+    provider, fake = start(home)
+    provider.sync_turn("plain", "ok", session_id="hermes-sess")
+    provider.on_session_end([])
+    (_, kwargs), = fake.called("ingest_session")
+    assert "idempotency_key" not in kwargs
+
+
 def test_a_timeout_that_landed_is_not_ingested_twice(secrets, home):
     provider, fake = start(home)
     fake.responses["ingest_session"] = httpx.ReadTimeout("timed out")

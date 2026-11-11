@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.1.0 (2026-11-11)
 
 ### Added
 
@@ -8,11 +8,17 @@
   disk (`$HERMES_HOME/mindgraph/capture.db`) before `sync_turn` returns and are
   delivered at least once, in order. A crash, a kill or an outage delays
   capture instead of losing it; the next start delivers what was left.
-- **Retries without duplicates.** `/ingest/session` has no idempotency key, so
+- **Retries without duplicates.** The deployed `/ingest/session` does not act on an idempotency key, so
   each batch carries a tag in its transcript title. A batch is marked as
   possibly sent before its request goes out, and an attempt of unknown outcome
   (a timeout, a 5xx, a process killed mid-send) is looked up among the
   server's jobs and transcript Documents before it is resent.
+- **Idempotency key, when available.** Each batch is also sent with an
+  `idempotency_key` once the installed `mindgraph-sdk` has that argument on
+  `ingest_session`. No published SDK has it yet (0.17.0 does not) and
+  api.mindgraph.cloud does not act on it yet, so today the tag lookup is what
+  prevents duplicates. When both ship, a resend returns the first transcript
+  with no plugin update.
 - **Delivery off Hermes's worker.** Transcripts are sent on the provider's own
   thread; `sync_turn` never waits on the network.
 - **Capture status.** `mindgraph_memory` `status` reports the queue (buffered,

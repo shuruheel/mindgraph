@@ -24,6 +24,7 @@ Automatic writes run only for the ``primary`` agent context.
 from __future__ import annotations
 
 import hashlib
+import inspect
 import logging
 import sqlite3
 import threading
@@ -136,6 +137,15 @@ def batch_title(batch: Batch) -> str:
     agent context that queued the batch, not the one delivering it."""
     kind = "session" if batch.context == "primary" else f"{batch.context} session"
     return f"Hermes {kind} {batch.session} · {batch.tag}"
+
+
+def _takes_idempotency_key(method: Any) -> bool:
+    """Whether this SDK's ``ingest_session`` has the ``idempotency_key`` argument
+    (newer than 0.17.0). A catch-all ``**kwargs`` does not count."""
+    try:
+        return "idempotency_key" in inspect.signature(method).parameters
+    except (TypeError, ValueError):
+        return False
 
 
 def _labels(value: Any) -> Iterable[tuple[str, Optional[str]]]:
@@ -483,9 +493,15 @@ class MindGraphMemoryProvider(MemoryProvider):
         except Exception as exc:
             # Nothing was sent. The transcript is not at fault, so it is retried, not parked.
             raise DeliveryNotSent(f"could not open the MindGraph session: {exc}") from exc
+        # A server that knows the key returns the first transcript on a resend
+        # instead of storing a second. Older servers ignore it, and an SDK
+        # without the argument is not given it; the tag lookup covers both.
+        extra = (
+            {"idempotency_key": f"hermes:{batch.batch_id}"} if _takes_idempotency_key(rt.client.ingest_session) else {}
+        )
         try:
             response = rt.client.ingest_session(
-                batch.content, title=batch_title(batch), session_uid=session_uid, agent_id=rt.agent_id
+                batch.content, title=batch_title(batch), session_uid=session_uid, agent_id=rt.agent_id, **extra
             )
         except MindGraphError as exc:
             status = exc.status or 0
@@ -509,8 +525,9 @@ class MindGraphMemoryProvider(MemoryProvider):
         document = receipt.get("document_uid") or receipt.get("doc_uid")
         job = receipt.get("job_id")
         return Receipt(
-            job_id=job if isinstance(job, str) else None,
-            document_uid=document if isinstance(document, str) else None,
+            # A replayed request names its Document and has no job of its own.
+            job_id=job if isinstance(job, str) and job else None,
+            document_uid=document if isinstance(document, str) and document else None,
         )
 
     def _find_batch(self, batch: Batch) -> Optional[Receipt]:

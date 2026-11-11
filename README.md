@@ -73,7 +73,7 @@ A completed turn is written to `$HERMES_HOME/mindgraph/capture.db` (SQLite, mode
 
 - a crash or kill loses nothing: the next start delivers what was left;
 - an outage delays capture: batches are retried with backoff, oldest first, and stay in order;
-- a request whose outcome is unknown is not ingested twice. `/ingest/session` has no idempotency key, so each batch's tag is in its transcript title (`Hermes session <id> · <tag>`). A batch is marked as possibly sent before its request goes out, and the next attempt, in this process or a later one, looks for the tag among the server's jobs and then among its transcript Documents before it sends again. If neither lookup can answer, the batch waits;
+- a request whose outcome is unknown is not ingested twice. The deployed `/ingest/session` does not act on an idempotency key yet, so each batch's tag is in its transcript title (`Hermes session <id> · <tag>`). A batch is marked as possibly sent before its request goes out, and the next attempt, in this process or a later one, looks for the tag among the server's jobs and then among its transcript Documents before it sends again. If neither lookup can answer, the batch waits. Each batch is also sent with an `idempotency_key` when the installed `mindgraph-sdk` has that argument (no published version does yet), so a server that supports the key returns the first transcript on a resend;
 - a request the server refuses outright is parked with its text and tried again at each start;
 - `/undo` removes every unsent turn of that conversation, including the undone turn if Hermes delivers it after the undo. Hermes does not say how far an undo went, so this errs toward not sending; the count is in status.
 
