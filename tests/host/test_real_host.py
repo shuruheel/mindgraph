@@ -105,21 +105,28 @@ def test_hermes_loads_the_plugin_and_it_satisfies_the_real_contract(home):
     manager.shutdown_all()
 
 
-def test_each_load_is_a_new_instance_bound_to_its_own_profile(home, tmp_path, server):
+def test_each_load_is_a_new_instance_bound_to_its_own_profile(home, tmp_path, server, monkeypatch):
     other = tmp_path / "second-home"
     other.mkdir()
     install_plugin(other)
     first, first_provider = boot(home, "session-a")
+    first.sync_all("Profile A: the ledger is on Postgres.", "Noted.", session_id="session-a")
+    assert first.flush_pending(10)
+
+    # Hermes runs a profile's hooks only from that profile's home.
+    monkeypatch.setenv("HERMES_HOME", str(other))
     second, second_provider = boot(other, "session-b")
     assert first_provider is not second_provider
-    first.sync_all("Profile A: the ledger is on Postgres.", "Noted.", session_id="session-a")
     second.sync_all("Profile B: the cache is Redis.", "Noted.", session_id="session-b")
-    assert first.flush_pending(10) and second.flush_pending(10)
+    assert second.flush_pending(10)
     assert queue_counts(home)["open_parts"] == 2 and queue_counts(other)["open_parts"] == 2
-    first.shutdown_all()
     second.shutdown_all()
+
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    first.shutdown_all()
     titles = sorted(body["title"].split(" · ")[0] for body in server.ingested())
     assert titles == ["Hermes session session-a", "Hermes session session-b"]
+    assert "Redis" not in (home / "mindgraph" / "capture.db").read_bytes().decode(errors="ignore")
 
 
 # ── A conversation ─────────────────────────────────────────────────────────
