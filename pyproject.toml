@@ -19,5 +19,11 @@ target-version = "py311"
 # Explicit, so a newer ruff's defaults do not change what CI enforces.
 select = ["E4", "E7", "E9", "F", "I", "B"]
 
+[tool.ruff.lint.isort]
+# The SDK's import name is also this repository's name, so a checkout directory
+# called "mindgraph" (CI) would otherwise sort the SDK as first-party and a
+# differently named one (a local clone) as third-party.
+known-third-party = ["mindgraph"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
