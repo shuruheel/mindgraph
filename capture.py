@@ -8,12 +8,14 @@ sealed into batches at the flush points, and delivered at least once: a batch
 leaves the queue only when the server accepted it, and a new process picks up
 whatever an earlier one left behind.
 
-Why batches carry a tag. ``/ingest/session`` has no idempotency key: every call
-creates a Document. A request may land without the client learning of it (a
+Why batches carry a tag. ``/ingest/session`` as deployed does not act on an idempotency
+key: every call creates a Document. A request may land without the client learning of it (a
 timeout, a dropped connection, a process killed after the send), so a batch is
 marked as possibly sent *before* its request goes out, its tag (a digest of its
 content) is written into the transcript title, and the next attempt looks for
-that tag on the server before it sends again.
+that tag on the server before it sends again. The provider also sends an
+idempotency key when the SDK takes one; the tag stays for servers that do not
+act on it.
 
 Why two ledgers. The pre-compress checkpoint hands over transcript rows that
 ``sync_turn`` has mostly captured already, and may run ahead of the turn it
