@@ -10,7 +10,7 @@ from conftest import FakeClient
 from hermes_mindgraph_plugin import dispatch
 from hermes_mindgraph_plugin import provider as provider_mod
 from hermes_mindgraph_plugin.governance import GateResult
-from hermes_mindgraph_plugin.provider import MindGraphMemoryProvider, builtin_memory_custom_id, topic_query
+from hermes_mindgraph_plugin.provider import MindGraphMemoryProvider, builtin_memory_custom_id
 from mindgraph import MindGraphError
 
 
@@ -99,12 +99,6 @@ def test_system_prompt_block_is_static_and_makes_no_calls(secrets):
     assert fake.calls == []
 
 
-def test_topic_query_keeps_discriminating_terms():
-    assert topic_query("What did we decide about the Voya pilot pricing?") == "decide voya pilot pricing"
-    assert topic_query("ok") == "ok"
-    assert len(topic_query(" ".join(f"term{i}" for i in range(30))).split()) == 8
-
-
 def test_prefetch_recalls_topic_context_and_the_first_turn_brief(secrets):
     provider, fake = make_provider(secrets)
     fake.responses["plan"] = {"status": "selected", "task": {"uid": "task-1", "label": "Ship B5 probe", "props": {}}}
@@ -118,12 +112,15 @@ def test_prefetch_recalls_topic_context_and_the_first_turn_brief(secrets):
     assert "Voya pilot" in first
     (plan_args, plan_kwargs), = fake.called("plan")
     assert plan_kwargs["action"] == "resume_work"
+    assert "Ship B5 probe" in first, "the open-work brief rides the first message"
     ((query,), context_kwargs), = fake.called("retrieve_context")
     assert query == "decide voya pilot pricing"
-    assert context_kwargs["node_limit"] == provider_mod.PREFETCH_LIMIT
+    assert context_kwargs["node_limit"] == 10, "twice the five shown: the relevance floor discards some"
+    assert context_kwargs["chunk_limit"] == 0 and context_kwargs["article_limit"] == 0
 
-    provider.prefetch("And the Voya pilot timeline?", session_id="hermes-sess")
+    second = provider.prefetch("And the Voya pilot timeline?", session_id="hermes-sess")
     assert len(fake.called("plan")) == 1, "the open-work brief is once per conversation"
+    assert second == "", "an item already in the conversation is not injected again"
 
 
 def test_prefetch_injects_nothing_for_an_empty_recall_or_a_failure(secrets):
@@ -289,7 +286,8 @@ def test_a_late_prefetch_cannot_overwrite_the_next_turns_recall_status(secrets, 
     fake.responses["plan"] = {"status": "no_eligible_work"}
     fake.responses["retrieve_context"] = {"graph": {"nodes": [], "edges": []}, "chunks": [], "articles": []}
 
-    hit = {"graph": {"nodes": [{"uid": "n1", "label": "Hit", "node_type": "Project", "props": {}}], "edges": []},
+    hit = {"graph": {"nodes": [{"uid": "n1", "label": "The slow original", "node_type": "Project", "props": {}}],
+                     "edges": []},
            "chunks": [], "articles": []}
     empty = {"graph": {"nodes": [], "edges": []}, "chunks": [], "articles": []}
     overtaken = []
@@ -303,7 +301,7 @@ def test_a_late_prefetch_cannot_overwrite_the_next_turns_recall_status(secrets, 
 
     fake.responses["retrieve_context"] = slow_then_overtaken
     stale = provider.prefetch("the slow original message", session_id="hermes-sess")
-    assert "Hit" in stale, "the late call still returns its own text to its own caller"
+    assert "The slow original" in stale, "the late call still returns its own text to its own caller"
     assert provider.recall_status() is None, "but it cannot publish over the newer turn's status"
 
 

@@ -3,8 +3,10 @@ mindgraph-mcp tool surface.
 
 - ``initialize`` binds a ``Runtime`` (client, identity, session) to this instance.
 - ``system_prompt_block`` is static: the MCP server's memory instructions.
-- ``prefetch`` recalls bounded topic context for the current message, plus the
-  open-work brief on a conversation's first turn.
+- ``prefetch`` recalls bounded context for the current message (``recall.py``:
+  content-term query, relevance floor, a deadline, no repeats), plus the
+  open-work brief on a conversation's first turn. ``queue_prefetch`` redoes a
+  recall that failed, off the turn path.
 - ``sync_turn`` commits completed turns to the profile's capture queue
   (``capture.py``); the queue is sealed into batches and delivered as session
   transcripts before compression, at session end or switch, and whenever it
@@ -22,10 +24,9 @@ Automatic writes run only for the ``primary`` agent context.
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
-import re
 import threading
+import time
 from typing import Any, Iterable, Optional
 
 import httpx
@@ -45,9 +46,9 @@ from .capture import (
 )
 from .dispatch import contract, handle_tool, static_tool_schemas
 from .governance import GovernanceGate
-from .memory_tool import MemoryRuntimeConfig, handle_memory_tool
+from .memory_tool import MemoryRuntimeConfig
+from .recall import OVERFETCH, RecallEngine, RecallQuery, load_config
 from .render import render_resume_context
-from .results import is_error
 from .runtime import DEFAULT_AGENT_ID, DEFAULT_BASE_URL, HARNESS, Runtime
 
 try:  # RecallStatus drives the "🧠 MindGraph — recalled N memories" line on newer Hermes.
@@ -74,37 +75,12 @@ FLUSH_BUDGET_S = 20.0
 # Marker Hermes leaves on a previous compaction's summary row; a summary is
 # derived text, never evidence.
 _COMPRESSED_SUMMARY_KEY = "_compressed_summary"
-PREFETCH_MAX_CHARS = 4_000
-PREFETCH_LIMIT = 5
-MIN_PREFETCH_CHARS = 12
-_STOPWORDS = frozenset(
-    "a an and are as at be but by can could did do does for from had has have how i if in into is it its "
-    "me my of on or our please should so that the their them then there these they this to us was we were "
-    "what when where which who why will with would you your about just also any some tell know want need "
-    "let lets like get got make".split()
-)
-_WORD = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.\-/#+]*")
-
 _HERMES_NOTES = """
 ## In Hermes
 
 - Relevant MindGraph context is recalled automatically for each message and appears in the turn as "MindGraph context". Call `mindgraph_memory` only when that recall is insufficient.
 - Completed turns are ingested into MindGraph as a session transcript, so do not re-store what was simply said; use the typed write tools for decisions, corrections, lessons and facts that need structure or confidence.
 - Writes from Hermes's built-in memory tool are mirrored into MindGraph automatically."""
-
-
-def topic_query(message: str, max_terms: int = 8) -> str:
-    """Discriminating keywords for BM25 topic recall: a full sentence dilutes the
-    query with words every node shares."""
-    seen: dict[str, None] = {}
-    for word in _WORD.findall(message[:600]):
-        key = word.lower().strip(".-/")
-        if len(key) < 2 or key in _STOPWORDS or key in seen:
-            continue
-        seen[key] = None
-        if len(seen) >= max_terms:
-            break
-    return " ".join(seen)
 
 
 def builtin_memory_custom_id(target: str, content: str) -> str:
@@ -163,7 +139,11 @@ class MindGraphMemoryProvider(MemoryProvider):
         self._memory_config: Optional[MemoryRuntimeConfig] = None
         self._model: str = ""
         self._auto_capture = True
+        self._recall: Optional[RecallEngine] = None
         self._briefed_sessions: set[str] = set()
+        # Conversation id -> the open-work lookup in flight or just finished.
+        self._briefs: dict[str, dict[str, Any]] = {}
+        self._previous_message = ""
         self._recall_count: Optional[int] = None
         self._recall_generation = 0
         # sync_turn (manager worker) and session switch/end/shutdown (caller
@@ -246,6 +226,11 @@ class MindGraphMemoryProvider(MemoryProvider):
             self._capture = CaptureQueue.open(kwargs.get("hermes_home"))
             self._deliverer = Deliverer(self._capture, self._send_batch, self._find_batch)
             self._recover_capture()
+        self._recall = RecallEngine(
+            self._fetch_recall,
+            load_config(get_secret, hermes_home=kwargs.get("hermes_home"), cwd=kwargs.get("cwd")),
+            spawn_context_thread,
+        )
         # mindgraph_memory status must describe what this provider actually does.
         self._memory_config = MemoryRuntimeConfig(
             server_version=__version__,
@@ -253,7 +238,7 @@ class MindGraphMemoryProvider(MemoryProvider):
             org_id=org_id,
             agent_id=agent_id,
             automatic_capture=self._auto_capture and self._rt.write_enabled,
-            automatic_delivery=True,
+            automatic_delivery=self._recall.config.enabled,
             capture_status=self._capture_status if self._capture is not None else None,
         )
 
@@ -267,69 +252,97 @@ class MindGraphMemoryProvider(MemoryProvider):
             self._rt.turn_number = max(int(turn_number or 0), 0)
         if kwargs.get("model"):
             self._model = str(kwargs["model"])
+        # The person's message before this one, from Hermes's own transcript: a
+        # resumed process has it even though it never saw that turn.
+        previous = kwargs.get("previous_message")
+        self._previous_message = previous if isinstance(previous, str) else ""
 
     # ── Recall ─────────────────────────────────────────────────────────────
 
     def prefetch(self, query: str, *, session_id: str = "") -> str:
-        """Recall for the current message.
+        """Recall for the current message, bounded by the recall deadline.
 
-        Hermes runs this on a thread bounded by its prefetch timeout. A call that
-        outlives that timeout must not overwrite a later turn's recall status, so
-        each call takes a generation and only the latest one may publish.
+        Hermes runs this on a thread with its own, longer timeout. A call that
+        outlives a later turn's must not overwrite that turn's recall status,
+        so each call takes a generation and only the latest one may publish.
         """
         with self._lock:
             self._recall_generation += 1
             generation = self._recall_generation
             self._recall_count = None
-        rt = self._rt
-        if rt is None or self._memory_config is None:
+        rt, recall = self._rt, self._recall
+        if rt is None or recall is None:
             return ""
-        sections: list[str] = []
-        count = 0
-        brief = self._first_turn_brief(session_id or rt.session_id)
-        if brief:
-            sections.append(brief)
-            count += 1
-        terms = topic_query(query or "") if len((query or "").strip()) >= MIN_PREFETCH_CHARS else ""
-        if terms:
-            result = handle_memory_tool(
-                rt,
-                {
-                    "action": "context",
-                    "mode": "topic",
-                    "query": terms,
-                    "limit": PREFETCH_LIMIT,
-                    "max_output_chars": PREFETCH_MAX_CHARS,
-                    "agent_id": rt.agent_id,
-                },
-                self._memory_config,
-            )
-            rendered, returned = _rendered_context(result)
-            if rendered:
-                sections.append(rendered)
-                count += returned
+        session = session_id or rt.session_id
+        deadline = time.monotonic() + recall.config.deadline_s
+        self._start_brief(session)  # runs beside the recall, not before it
+        recalled = recall.recall(session, query or "", previous=self._previous_message)
+        brief = self._collect_brief(session, deadline)
+        sections = [text for text in (brief, recalled.text) if text]
         if not sections:
             return ""
         with self._lock:
             if generation == self._recall_generation:
-                self._recall_count = count
+                self._recall_count = recalled.count + (1 if brief else 0)
         return "## MindGraph context (recalled for this message)\n\n" + "\n\n".join(sections)
 
-    def _first_turn_brief(self, session_id: str) -> str:
-        """Open work, once per conversation, and only when there is some. A failed
-        lookup is retried on the next message."""
+    def queue_prefetch(self, query: str, *, session_id: str = "") -> None:
+        """After a turn, on Hermes's background worker: retry a recall that
+        failed, so the next message has one to fall back on."""
+        if self._rt is not None and self._recall is not None:
+            self._recall.after_turn(session_id or self._rt.session_id, query or "")
+
+    def _fetch_recall(self, query: RecallQuery) -> Any:
+        config = self._recall.config
+        options = {
+            "project_uid": config.project_uid,
+            # The floor discards candidates, so fetch more than will be shown.
+            "node_limit": config.limit * OVERFETCH,
+            "chunk_limit": 0,
+            "article_limit": 0,
+            "include_graph": True,
+            "graph_expansion_limit": 3,
+            "graph_max_depth": 2,
+            "rerank": config.rerank,
+        }
+        return self._rt.client.retrieve_context(
+            query.query, **{key: value for key, value in options.items() if value is not None}
+        )
+
+    def _start_brief(self, session_id: str) -> None:
+        """Look up open work once per conversation. A failed lookup is retried
+        on the next message; a late one is used by it."""
         rt = self._rt
-        if rt is None or session_id in self._briefed_sessions:
+        with self._lock:
+            entry = self._briefs.get(session_id)
+            if session_id in self._briefed_sessions or (entry is not None and not entry.get("failed")):
+                return
+            entry = self._briefs[session_id] = {"done": threading.Event()}
+
+        def run() -> None:
+            try:
+                brief = rt.client.plan(action="resume_work", agent_id=rt.agent_id, limit=1)
+                found = isinstance(brief, dict) and brief.get("task")
+                entry["text"] = (render_resume_context(brief) or "") if found else ""
+            except Exception as exc:
+                logger.debug("MindGraph resume brief failed (non-fatal): %s", exc)
+                entry["failed"] = True
+            finally:
+                entry["done"].set()
+
+        spawn_context_thread(run, name="mindgraph-brief").start()
+
+    def _collect_brief(self, session_id: str, deadline: float) -> str:
+        with self._lock:
+            entry = self._briefs.get(session_id)
+        if entry is None or not entry["done"].wait(max(0.0, deadline - time.monotonic())):
             return ""
-        try:
-            brief = rt.client.plan(action="resume_work", agent_id=rt.agent_id, limit=1)
-        except Exception as exc:
-            logger.debug("MindGraph resume brief failed (non-fatal): %s", exc)
+        if entry.get("failed"):
             return ""
-        self._briefed_sessions.add(session_id)
-        if not isinstance(brief, dict) or not brief.get("task"):
-            return ""
-        return render_resume_context(brief) or ""
+        with self._lock:
+            self._briefed_sessions.add(session_id)
+            self._briefs.pop(session_id, None)
+        return entry.get("text", "")
 
     def recall_status(self):
         if RecallStatus is None or self._recall_count is None:
@@ -524,6 +537,9 @@ class MindGraphMemoryProvider(MemoryProvider):
         Success means committed to the profile's queue on disk; delivery to
         MindGraph follows at least once."""
         rt, capture = self._rt, self._capture
+        if rt is not None and self._recall is not None:
+            # The turns being compressed carried earlier recall with them.
+            self._recall.forget_injected(rt.session_id)
         if rt is None or capture is None:
             if require_checkpoint:
                 raise RuntimeError("MindGraph capture is off; no pre-compress checkpoint can be taken")
@@ -598,6 +614,11 @@ class MindGraphMemoryProvider(MemoryProvider):
             return
         previous = rt.session_id
         self._flush_quietly("session switch")
+        if self._recall is not None:
+            if reset:
+                self._recall.drop(previous)
+            else:  # the same conversation under a new id (compression, /resume, /branch)
+                self._recall.rebind(previous, new_session_id)
         with self._lock:
             rt.session_id = new_session_id
             rt.turn_number = 0
@@ -654,21 +675,3 @@ class MindGraphMemoryProvider(MemoryProvider):
         if self._rt is None or self._memory_config is None:
             return '{"error":"MindGraph provider is not initialized"}'
         return handle_tool(self._rt, self._gate, self._memory_config, tool_name, args)
-
-
-def _rendered_context(result: str) -> tuple[str, int]:
-    """Rendered text and returned-item count from a memory-tool result; an empty
-    recall injects nothing."""
-    if is_error(result):
-        logger.debug("MindGraph topic recall failed: %s", result[:300])
-        return "", 0
-    try:
-        decoded = json.loads(result)
-    except ValueError:
-        return "", 0
-    text = decoded.get("result") if isinstance(decoded, dict) else None
-    budget = (decoded.get("structured") or {}).get("budget") if isinstance(decoded, dict) else None
-    returned = budget.get("returned_items") if isinstance(budget, dict) else None
-    if returned == 0 or not text:
-        return "", 0
-    return text.strip(), returned if isinstance(returned, int) else 1
