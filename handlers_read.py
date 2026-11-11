@@ -105,6 +105,13 @@ def handle_retrieve(rt: Runtime, args: dict[str, Any]) -> str:
             article_limit = 0
         graph_expansion_limit = args.get("graph_expansion_limit")
         graph_max_depth = args.get("graph_max_depth")
+        # Evidence plan R2: ask for the server's canonical rendering under a token
+        # budget derived from the character budget; render_context falls back to
+        # the local renderer for servers that predate it.
+        server_text: dict[str, Any] = {}
+        if fmt != "json":
+            budget = max_chars if _is_number(max_chars) else 24_000
+            server_text = {"format": "text", "max_tokens": max(256, int(budget // 4))}
         return rendered(
             fmt,
             client.retrieve_context(
@@ -115,9 +122,12 @@ def handle_retrieve(rt: Runtime, args: dict[str, Any]) -> str:
                 chunk_limit=(limit if limit is not None else 5) if args.get("include_chunks") else 0,
                 article_limit=article_limit,
                 valid_at=args.get("valid_at"),
+                as_of=args.get("as_of"),
+                retrieval_mode=args.get("retrieval_mode"),
                 include_graph=args.get("include_graph"),
                 graph_expansion_limit=3 if graph_expansion_limit is None else graph_expansion_limit,
                 graph_max_depth=2 if graph_max_depth is None else graph_max_depth,
+                **server_text,
             ),
             lambda raw: _render().render_context(raw, max_chars),
         )
@@ -342,7 +352,7 @@ def handle_ingest(rt: Runtime, args: dict[str, Any]) -> str:
 
 
 def _ingest_ontology_only(client: Any, path: str, content: str, fields: dict[str, Any]) -> Any:
-    """mindgraph-sdk 0.16 ``ingest_document``/``ingest_session`` have no
+    """mindgraph-sdk (through 0.17) ``ingest_document``/``ingest_session`` have no
     ``ontology_only`` parameter, so this one request is built here; the body keys
     match what the SDK methods send."""
     body = {"content": content, **_compact(fields), "ontology_only": True}

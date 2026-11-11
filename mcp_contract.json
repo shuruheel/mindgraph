@@ -1,5 +1,5 @@
 {
-  "mcp_version": "0.21.0",
+  "mcp_version": "0.25.0",
   "tools": [
     {
       "name": "mindgraph_capture",
@@ -811,6 +811,18 @@
           "valid_at": {
             "type": "string",
             "description": "ISO-8601 date (e.g. '2021-06') for context: nodes with validity windows are annotated as of this date instead of today"
+          },
+          "as_of": {
+            "type": "string",
+            "description": "ISO-8601 date for context: answer with what had been STATED by this date (a node is admitted when one of its sources was stated on or before it; fact dates never exclude it). Use for 'what did we know / what was the value as of <date>' questions."
+          },
+          "retrieval_mode": {
+            "type": "string",
+            "enum": [
+              "normal",
+              "exhaustive"
+            ],
+            "description": "context: 'exhaustive' widens retrieval for list/count questions ('how many different … across', 'what two …'); omitted lets the server's cue decide."
           },
           "created_after": {
             "type": "number",
