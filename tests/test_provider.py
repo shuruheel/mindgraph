@@ -10,7 +10,7 @@ from conftest import FakeClient
 from hermes_mindgraph_plugin import dispatch
 from hermes_mindgraph_plugin import provider as provider_mod
 from hermes_mindgraph_plugin.governance import GateResult
-from hermes_mindgraph_plugin.provider import MindGraphMemoryProvider, builtin_memory_custom_id, topic_query
+from hermes_mindgraph_plugin.provider import MindGraphMemoryProvider, builtin_memory_custom_id
 from mindgraph import MindGraphError
 
 
@@ -38,9 +38,18 @@ def secrets(monkeypatch):
     return values
 
 
-def make_provider(secrets, *, session_id="hermes-sess", **kwargs):
+@pytest.fixture(autouse=True)
+def profile_home(tmp_path, monkeypatch):
+    """Every provider in this module binds its capture queue to a fresh profile directory."""
+    home = tmp_path / "profile"
+    monkeypatch.setattr(provider_mod, "_TEST_HOME", str(home), raising=False)
+    return home
+
+
+def make_provider(secrets, *, session_id="hermes-sess", hermes_home=None, **kwargs):
     provider = MindGraphMemoryProvider()
-    provider.initialize(session_id, hermes_home="/tmp/profile", platform="cli", **kwargs)
+    home = hermes_home or provider_mod._TEST_HOME
+    provider.initialize(session_id, hermes_home=home, platform="cli", **kwargs)
     fake = FakeClient()
     fake.responses["session"] = lambda **body: {"uid": "session-uid-1"} if body["action"] == "open" else {}
     provider._rt.client = fake
@@ -90,12 +99,6 @@ def test_system_prompt_block_is_static_and_makes_no_calls(secrets):
     assert fake.calls == []
 
 
-def test_topic_query_keeps_discriminating_terms():
-    assert topic_query("What did we decide about the Voya pilot pricing?") == "decide voya pilot pricing"
-    assert topic_query("ok") == "ok"
-    assert len(topic_query(" ".join(f"term{i}" for i in range(30))).split()) == 8
-
-
 def test_prefetch_recalls_topic_context_and_the_first_turn_brief(secrets):
     provider, fake = make_provider(secrets)
     fake.responses["plan"] = {"status": "selected", "task": {"uid": "task-1", "label": "Ship B5 probe", "props": {}}}
@@ -109,12 +112,15 @@ def test_prefetch_recalls_topic_context_and_the_first_turn_brief(secrets):
     assert "Voya pilot" in first
     (plan_args, plan_kwargs), = fake.called("plan")
     assert plan_kwargs["action"] == "resume_work"
+    assert "Ship B5 probe" in first, "the open-work brief rides the first message"
     ((query,), context_kwargs), = fake.called("retrieve_context")
     assert query == "decide voya pilot pricing"
-    assert context_kwargs["node_limit"] == provider_mod.PREFETCH_LIMIT
+    assert context_kwargs["node_limit"] == 10, "twice the five shown: the relevance floor discards some"
+    assert context_kwargs["chunk_limit"] == 0 and context_kwargs["article_limit"] == 0
 
-    provider.prefetch("And the Voya pilot timeline?", session_id="hermes-sess")
+    second = provider.prefetch("And the Voya pilot timeline?", session_id="hermes-sess")
     assert len(fake.called("plan")) == 1, "the open-work brief is once per conversation"
+    assert second == "", "an item already in the conversation is not injected again"
 
 
 def test_prefetch_injects_nothing_for_an_empty_recall_or_a_failure(secrets):
@@ -148,9 +154,19 @@ def test_turns_are_buffered_and_ingested_once(secrets):
     assert [kw["action"] for _, kw in fake.called("session")] == ["open", "close"]
 
 
+def settle() -> None:
+    """Wait for the provider's own delivery threads."""
+    import threading
+
+    for thread in threading.enumerate():
+        if thread.name.startswith("mindgraph-"):
+            thread.join(5)
+
+
 def test_a_large_buffer_flushes_without_waiting_for_session_end(secrets):
     provider, fake = make_provider(secrets)
     provider.sync_turn("x" * provider_mod.FLUSH_CHARS, "ok", session_id="hermes-sess")
+    settle()
     assert len(fake.called("ingest_session")) == 1
 
 
@@ -162,8 +178,10 @@ def test_a_failed_ingest_keeps_the_turns_for_the_next_flush(secrets):
     fake.responses["ingest_session"] = {"job_id": "j1"}
     provider.sync_turn("second", "reply", session_id="hermes-sess")
     provider.on_session_end([])
-    content = fake.called("ingest_session")[-1][0][0]
-    assert content.index("first") < content.index("second")
+    sent = [args[0] for args, _ in fake.called("ingest_session")]
+    assert len(sent) == 3, "the refused batch is sent again, then the newer one"
+    assert sent[0] == sent[1] and "first" in sent[1]
+    assert "second" in sent[2] and "first" not in sent[2], "batches go out oldest first, each once"
 
 
 @pytest.mark.parametrize("context", ["subagent", "cron", "flush"])
@@ -211,7 +229,7 @@ def test_session_switch_flushes_under_the_old_session_and_rebinds(secrets):
     provider, fake = make_provider(secrets)
     provider.sync_turn("before switch", "ok", session_id="hermes-sess")
     provider.on_session_switch("hermes-sess-2", reset=True)
-    assert fake.called("ingest_session")[0][1]["title"] == "Hermes session hermes-sess"
+    assert fake.called("ingest_session")[0][1]["title"].startswith("Hermes session hermes-sess · ")
     assert provider._rt.session_id == "hermes-sess-2"
     closes = [kw for _, kw in fake.called("session") if kw["action"] == "close"]
     assert len(closes) == 1, "the old conversation's Session is closed at the switch"
@@ -263,7 +281,7 @@ def test_a_turn_queued_before_a_switch_stays_with_its_own_conversation(secrets):
     provider.sync_turn("late turn", "ok", session_id="hermes-sess")
     provider.sync_turn("new turn", "ok", session_id="hermes-sess-2")
     provider.on_session_end([])
-    by_title = {kw["title"]: args[0] for args, kw in fake.called("ingest_session")}
+    by_title = {kw["title"].split(" · ")[0]: args[0] for args, kw in fake.called("ingest_session")}
     assert "late turn" in by_title["Hermes session hermes-sess"]
     assert "late turn" not in by_title["Hermes session hermes-sess-2"]
     opened = [kw["harness_session_id"] for _, kw in fake.called("session") if kw["action"] == "open"]
@@ -278,7 +296,8 @@ def test_a_late_prefetch_cannot_overwrite_the_next_turns_recall_status(secrets, 
     fake.responses["plan"] = {"status": "no_eligible_work"}
     fake.responses["retrieve_context"] = {"graph": {"nodes": [], "edges": []}, "chunks": [], "articles": []}
 
-    hit = {"graph": {"nodes": [{"uid": "n1", "label": "Hit", "node_type": "Project", "props": {}}], "edges": []},
+    hit = {"graph": {"nodes": [{"uid": "n1", "label": "The slow original", "node_type": "Project", "props": {}}],
+                     "edges": []},
            "chunks": [], "articles": []}
     empty = {"graph": {"nodes": [], "edges": []}, "chunks": [], "articles": []}
     overtaken = []
@@ -292,7 +311,7 @@ def test_a_late_prefetch_cannot_overwrite_the_next_turns_recall_status(secrets, 
 
     fake.responses["retrieve_context"] = slow_then_overtaken
     stale = provider.prefetch("the slow original message", session_id="hermes-sess")
-    assert "Hit" in stale, "the late call still returns its own text to its own caller"
+    assert "The slow original" in stale, "the late call still returns its own text to its own caller"
     assert provider.recall_status() is None, "but it cannot publish over the newer turn's status"
 
 

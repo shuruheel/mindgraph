@@ -24,3 +24,7 @@ hooks:
 #   MINDGRAPH_ORG_ID        org header for multi-org keys
 #   MINDGRAPH_GOVERNANCE    "off" skips the per-call governance checkpoint
 #   MINDGRAPH_AUTO_CAPTURE  "off" stops automatic transcript ingestion
+#   MINDGRAPH_RECALL        "off" stops per-message recall
+#   MINDGRAPH_RECALL_LIMIT / _MAX_CHARS / _DEADLINE_MS / _FLOOR / _RERANK
+#   MINDGRAPH_PROJECT_UID   bound recall to one corpus Project
+# See the README for defaults and ranges.

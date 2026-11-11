@@ -1,0 +1,43 @@
+# eval — the memory outcome suite against a real MindGraph org (evals/README.md).
+#
+# Manual only: it writes transcripts, a task and memory entries into the org
+# behind MINDGRAPH_EVAL_API_KEY, and waits on real extraction jobs. Use a
+# dedicated test org. The harness itself is checked on every push by
+# tests/test_evals.py against a scripted server.
+name: eval
+
+on:
+  workflow_dispatch:
+    inputs:
+      only:
+        description: "Run one scenario by name (blank = all)"
+        required: false
+        default: ""
+
+jobs:
+  outcome-suite:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: |
+          python -c "import tomllib; print('\n'.join(tomllib.load(open('pyproject.toml','rb'))['project']['dependencies']))" > /tmp/requirements.txt
+          python -m pip install -r /tmp/requirements.txt
+      - name: Run the suite
+        env:
+          MINDGRAPH_EVAL_API_KEY: ${{ secrets.MINDGRAPH_EVAL_API_KEY }}
+          MINDGRAPH_EVAL_BASE_URL: ${{ vars.MINDGRAPH_EVAL_BASE_URL }}
+          ONLY: ${{ inputs.only }}
+        run: |
+          test -n "$MINDGRAPH_EVAL_API_KEY" || { echo "::error::set the MINDGRAPH_EVAL_API_KEY repository secret to a dedicated test org's key"; exit 2; }
+          test -n "$MINDGRAPH_EVAL_BASE_URL" || unset MINDGRAPH_EVAL_BASE_URL
+          python -m evals.run --report eval-report.json ${ONLY:+--only "$ONLY"} | tee eval-report.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: eval-report
+          path: |
+            eval-report.json
+            eval-report.txt

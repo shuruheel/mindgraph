@@ -57,7 +57,11 @@ def _load_plugin_package() -> None:
     spec.loader.exec_module(module)
 
 
-_install_hermes_stubs()
+# tests/host runs against a real Hermes checkout (HERMES_HOST_TESTS=1): the real
+# MemoryProvider ABC and MemoryManager, never the stand-ins.
+HOST_TESTS = os.environ.get("HERMES_HOST_TESTS") == "1"
+if not HOST_TESTS:
+    _install_hermes_stubs()
 _load_plugin_package()
 
 

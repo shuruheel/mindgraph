@@ -172,15 +172,36 @@ def _unwrap_search_result(value: Any) -> Optional[Rec]:
     return None
 
 
+def superseded_by(node: Rec) -> Optional[str]:
+    """What replaced a node, or ``None`` when it is not superseded.
+
+    ``/retrieve/context`` sends ``superseded`` as an object naming the head of
+    the chain (``head_label``, ``head_uid``, ``head_stated_at``); older surfaces
+    send ``superseded: true`` beside ``superseded_by``. Returns ``""`` when the
+    node is superseded and nothing names its replacement."""
+    marker = node.get("superseded")
+    if not marker:
+        return None
+    if isinstance(marker, dict):
+        head = " ".join((_str(marker.get("head_label")) or _str(marker.get("head_uid")) or "").split())
+        head = head if len(head) <= 80 else f"{head[:79]}…"
+        date = _str(marker.get("head_stated_at"))
+        return f"{head} ({date[:10]})" if head and date else head
+    return _str(node.get("superseded_by")) or ""
+
+
 def status_tag(node: Rec) -> str:
     """Epistemics the raw JSON buries; without these a model states refuted or
     superseded knowledge as current."""
     tags: list[str] = []
-    if node.get("superseded") is True:
-        tags.append(f"SUPERSEDED by {_str(node.get('superseded_by'))}" if node.get("superseded_by") else "SUPERSEDED")
+    replacement = superseded_by(node)
+    if replacement is not None:
+        tags.append(f"SUPERSEDED by {replacement}" if replacement else "SUPERSEDED")
     truth = _str(node.get("truth_status")) or _str((_obj(node.get("props")) or {}).get("truth_status"))
     if truth and truth != "accepted":
         tags.append(f"truth: {truth}")
+    if node.get("conflict"):
+        tags.append("CONFLICT: unresolved")
     if node.get("currently_valid") is False:
         tags.append("OUTSIDE ITS VALIDITY WINDOW")
     if node.get("valid_at_time") is False:
