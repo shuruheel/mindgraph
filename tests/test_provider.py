@@ -38,9 +38,18 @@ def secrets(monkeypatch):
     return values
 
 
-def make_provider(secrets, *, session_id="hermes-sess", **kwargs):
+@pytest.fixture(autouse=True)
+def profile_home(tmp_path, monkeypatch):
+    """Every provider in this module binds its capture queue to a fresh profile directory."""
+    home = tmp_path / "profile"
+    monkeypatch.setattr(provider_mod, "_TEST_HOME", str(home), raising=False)
+    return home
+
+
+def make_provider(secrets, *, session_id="hermes-sess", hermes_home=None, **kwargs):
     provider = MindGraphMemoryProvider()
-    provider.initialize(session_id, hermes_home="/tmp/profile", platform="cli", **kwargs)
+    home = hermes_home or provider_mod._TEST_HOME
+    provider.initialize(session_id, hermes_home=home, platform="cli", **kwargs)
     fake = FakeClient()
     fake.responses["session"] = lambda **body: {"uid": "session-uid-1"} if body["action"] == "open" else {}
     provider._rt.client = fake
@@ -162,8 +171,10 @@ def test_a_failed_ingest_keeps_the_turns_for_the_next_flush(secrets):
     fake.responses["ingest_session"] = {"job_id": "j1"}
     provider.sync_turn("second", "reply", session_id="hermes-sess")
     provider.on_session_end([])
-    content = fake.called("ingest_session")[-1][0][0]
-    assert content.index("first") < content.index("second")
+    sent = [args[0] for args, _ in fake.called("ingest_session")]
+    assert len(sent) == 3, "the refused batch is sent again, then the newer one"
+    assert sent[0] == sent[1] and "first" in sent[1]
+    assert "second" in sent[2] and "first" not in sent[2], "batches go out oldest first, each once"
 
 
 @pytest.mark.parametrize("context", ["subagent", "cron", "flush"])
@@ -211,7 +222,7 @@ def test_session_switch_flushes_under_the_old_session_and_rebinds(secrets):
     provider, fake = make_provider(secrets)
     provider.sync_turn("before switch", "ok", session_id="hermes-sess")
     provider.on_session_switch("hermes-sess-2", reset=True)
-    assert fake.called("ingest_session")[0][1]["title"] == "Hermes session hermes-sess"
+    assert fake.called("ingest_session")[0][1]["title"].startswith("Hermes session hermes-sess · ")
     assert provider._rt.session_id == "hermes-sess-2"
     closes = [kw for _, kw in fake.called("session") if kw["action"] == "close"]
     assert len(closes) == 1, "the old conversation's Session is closed at the switch"
@@ -263,7 +274,7 @@ def test_a_turn_queued_before_a_switch_stays_with_its_own_conversation(secrets):
     provider.sync_turn("late turn", "ok", session_id="hermes-sess")
     provider.sync_turn("new turn", "ok", session_id="hermes-sess-2")
     provider.on_session_end([])
-    by_title = {kw["title"]: args[0] for args, kw in fake.called("ingest_session")}
+    by_title = {kw["title"].split(" · ")[0]: args[0] for args, kw in fake.called("ingest_session")}
     assert "late turn" in by_title["Hermes session hermes-sess"]
     assert "late turn" not in by_title["Hermes session hermes-sess-2"]
     opened = [kw["harness_session_id"] for _, kw in fake.called("session") if kw["action"] == "open"]

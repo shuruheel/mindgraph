@@ -15,7 +15,7 @@ import math
 import re
 from dataclasses import dataclass, replace
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from .render import render_context, render_resume_context
 from .results import err, ok, text, tool_error
@@ -44,6 +44,8 @@ class MemoryRuntimeConfig:
     # the provider's sync_turn/on_session_end (capture) and prefetch (delivery).
     automatic_capture: bool = False
     automatic_delivery: bool = False
+    # Hermes only: the capture queue's state (pending, failed, last delivery).
+    capture_status: Optional[Callable[[], Rec]] = None
 
 
 def _obj(value: Any) -> Optional[Rec]:
@@ -121,6 +123,7 @@ def memory_status(config: MemoryRuntimeConfig) -> Rec:
             "message": "Curator proposals and autonomous mutation are not enabled.",
         }
     )
+    queue = _capture_report(config, degradation)
     return {
         "schema_version": RESULT_SCHEMA_VERSION,
         "action": "status",
@@ -151,8 +154,66 @@ def memory_status(config: MemoryRuntimeConfig) -> Rec:
             "automatic_context_injection": delivery,
             "curator_mutation": False,
         },
+        **({"capture": queue} if queue else {}),
         "degradation": degradation,
     }
+
+
+def _capture_report(config: MemoryRuntimeConfig, degradation: list[Rec]) -> Optional[Rec]:
+    """The capture queue's state, with one degradation entry per way captured
+    turns are not (yet) in the graph. A queue that is merely waiting is normal;
+    one that is failing, parked or dropping is what the model should report."""
+    if config.capture_status is None:
+        return None
+    try:
+        queue = config.capture_status()
+    except Exception as exc:  # status must describe a broken queue, not fail on it
+        degradation.append({"code": "capture_status_unavailable", "message": f"Capture queue unreadable: {exc}"})
+        return None
+    if not queue:
+        return None
+    if queue.get("durable") is False:
+        degradation.append(
+            {
+                "code": "capture_not_durable",
+                "message": "The profile directory could not hold the capture queue; undelivered turns live in "
+                "memory and are lost if Hermes exits before they are sent.",
+            }
+        )
+    failure = _obj(queue.get("last_error"))
+    if failure and failure.get("state") == "retrying":
+        degradation.append(
+            {
+                "code": "capture_delivery_delayed",
+                "message": f"{queue.get('pending_batches', 0)} transcript batch(es) are queued on disk and being "
+                f"retried; last error: {failure.get('message')}",
+            }
+        )
+    if queue.get("failed_batches"):
+        degradation.append(
+            {
+                "code": "capture_batches_parked",
+                "message": f"{queue['failed_batches']} transcript batch(es) were refused by the server and are "
+                "parked on disk; each is retried once when Hermes next starts.",
+            }
+        )
+    if queue.get("dropped_batches"):
+        degradation.append(
+            {
+                "code": "capture_batches_dropped",
+                "message": f"{queue['dropped_batches']} undelivered transcript batch(es) were dropped because the "
+                "queue exceeded its size bound.",
+            }
+        )
+    if queue.get("failed_extraction_jobs"):
+        degradation.append(
+            {
+                "code": "capture_extraction_failed",
+                "message": f"{queue['failed_extraction_jobs']} delivered transcript(s) failed extraction on the "
+                "server; the transcript text is stored there and the job can be resumed.",
+            }
+        )
+    return queue
 
 
 def _node_type(node: Rec) -> str:
