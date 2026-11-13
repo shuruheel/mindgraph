@@ -13,6 +13,8 @@ the same keys the MCP sends.
 
 from __future__ import annotations
 
+import math
+import time
 from types import ModuleType
 from typing import Any
 
@@ -271,6 +273,39 @@ def handle_retrieve(rt: Runtime, args: dict[str, Any]) -> str:
 # ── Ingest ────────────────────────────────────────────────────────────
 
 
+def _job_status(client: Any, job_id: str, wait_seconds: Any) -> str:
+    """MCP's bounded polling contract; Hermes has no tool-progress channel."""
+    wait = (
+        min(50, max(0, math.floor(wait_seconds)))
+        if _is_number(wait_seconds) and math.isfinite(wait_seconds) else 0
+    )
+    started = time.monotonic()
+    job = client.get_job(job_id)
+    if not wait:
+        return ok(job)
+
+    def terminal() -> bool:
+        status = job.get("status") if isinstance(job, dict) else None
+        return not isinstance(status, str) or status in {
+            "completed", "completed_with_errors", "failed", "cancelled",
+        }
+
+    while not terminal():
+        remaining = started + wait - time.monotonic()
+        if remaining <= 0:
+            break
+        time.sleep(min(2, remaining))
+        job = client.get_job(job_id)
+    return ok({
+        **(job if isinstance(job, dict) else {"job": job}),
+        "waited_seconds": math.floor(time.monotonic() - started + 0.5),
+        **({
+            "still_running": True,
+            "next": "The job is still running. Call job_status again with wait_seconds to keep waiting.",
+        } if not terminal() else {}),
+    })
+
+
 def handle_ingest(rt: Runtime, args: dict[str, Any]) -> str:
     action = args.get("action")
     content = args.get("content")
@@ -343,7 +378,7 @@ def handle_ingest(rt: Runtime, args: dict[str, Any]) -> str:
     if action == "job_status":
         job_id = args.get("job_id")
         if job_id:
-            return ok(client.get_job(job_id))
+            return _job_status(client, job_id, args.get("wait_seconds"))
         # The bare list was unbounded raw JSON of every job; render it
         # newest-first and capped (format:"json" returns the full raw list).
         return rendered(args.get("format"), client.list_jobs(), lambda raw: _render().render_jobs(raw))
@@ -385,7 +420,7 @@ def handle_synthesize(rt: Runtime, args: dict[str, Any]) -> str:
         job_id = args.get("job_id")
         if not job_id:
             return err("job_id is required for action='job_status'")
-        return ok(client.get_job(job_id))
+        return _job_status(client, job_id, args.get("wait_seconds"))
 
     return err(f"Unknown synthesize action: {action}")
 

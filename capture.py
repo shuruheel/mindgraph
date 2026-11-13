@@ -28,6 +28,7 @@ This module does not import Hermes.
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import os
 import re
@@ -41,10 +42,9 @@ from typing import Any, Callable, Iterable, Optional
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 1
-# Undelivered text the queue will hold. Past it the oldest undelivered batches
-# are dropped, counted and reported: a server that is down for good must not
-# fill the disk, and a silent drop is the failure this module exists to remove.
+SCHEMA_VERSION = 2
+# Reject new evidence atomically at capacity. Accepted checkpoints must never
+# be evicted while they are the only durable copy of a compressed transcript.
 MAX_PENDING_CHARS = 20_000_000
 # One /ingest/session body. Larger batches are split at part boundaries.
 MAX_BATCH_CHARS = 200_000
@@ -65,10 +65,6 @@ RETENTION_S = 30 * 86_400.0
 # swallow the same words said again later.
 PREPAID_TTL_S = 3_600.0
 PRUNE_EVERY_S = 86_400.0
-# After an undo, a turn that arrives this soon is the undone one, still in
-# Hermes's background queue when the undo ran. A real next turn takes longer:
-# a person types it and a model answers it.
-UNDO_GRACE_S = 2.0
 _OPEN_ATTEMPTS = 3
 _WS = re.compile(r"\s+")
 
@@ -121,11 +117,16 @@ CREATE TABLE IF NOT EXISTS prepaid (
     PRIMARY KEY (session, digest)
 );
 CREATE TABLE IF NOT EXISTS rewinds (session TEXT PRIMARY KEY, at REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS session_epochs (session TEXT PRIMARY KEY, generation INTEGER NOT NULL);
 """
 
 
 class CaptureError(RuntimeError):
     """The queue could not commit. A checkpoint that sees this must not report success."""
+
+
+class CaptureFull(CaptureError):
+    """New evidence cannot fit without losing an already accepted checkpoint."""
 
 
 class DeliveryRejected(Exception):
@@ -177,8 +178,18 @@ def part_digest(role: str, text: str) -> str:
     return hashlib.sha256(f"{role}\x1f{normalized}".encode()).hexdigest()
 
 
-def render_parts(parts: Iterable[tuple[str, str]]) -> str:
-    return "\n\n".join(f"{'User' if role == 'user' else 'Assistant'}: {text}" for role, text in parts)
+def render_parts(parts: Iterable[tuple]) -> str:
+    labels = {"user": "User", "user_attribution": "User attribution", "assistant": "Assistant", "delegation_task": "Delegated task",
+              "delegation_result": "Delegated result"}
+    rendered = []
+    for row in parts:
+        role, text = row[:2]
+        author = json.loads(row[2]) if len(row) > 2 and row[2] else None
+        label = labels.get(role, role)
+        if author:
+            label += " " + json.dumps(author, ensure_ascii=False, sort_keys=True)
+        rendered.append(f"{label}: {text}")
+    return "\n\n".join(rendered)
 
 
 def retry_delay(attempts: int) -> float:
@@ -215,8 +226,26 @@ class CaptureQueue:
             except OSError:
                 pass
         self._db.executescript(_DDL)
+        self._tx(self._migrate)
+
+    def _migrate(self) -> None:
+        columns = {row[1] for row in self._db.execute("PRAGMA table_info(parts)")}
+        if "author" not in columns:
+            self._db.execute("ALTER TABLE parts ADD COLUMN author TEXT")
+            # v1 copied ledgers without evidence ownership. After an undo or
+            # eviction, an orphaned alias is indistinguishable from delivered
+            # evidence (the old undo/drop receipt may already be pruned).
+            # Only retained text is verifiable: replay other rows once rather
+            # than certify missing evidence. Prepaid records have no verifiable
+            # occurrence identity either, so don't suppress a completed turn.
+            self._db.execute("DELETE FROM seen")
+            self._db.execute("DELETE FROM prepaid")
+            self._db.execute(
+                "INSERT INTO seen(session, digest, at) "
+                "SELECT session, digest, MAX(created_at) FROM parts GROUP BY session, digest"
+            )
         self._db.execute(
-            "INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', ?)", (str(SCHEMA_VERSION),)
+            "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)", (str(SCHEMA_VERSION),)
         )
 
     @classmethod
@@ -264,8 +293,10 @@ class CaptureQueue:
             except sqlite3.Error as exc:
                 self._rollback()
                 raise CaptureError(f"capture queue write failed: {exc}") from exc
-            except BaseException:
+            except BaseException as exc:
                 self._rollback()
+                if isinstance(exc, CaptureFull):
+                    self._bump("capacity_rejections", 1)
                 raise
 
     def _rollback(self) -> None:
@@ -291,15 +322,18 @@ class CaptureQueue:
             (key, str(amount)),
         )
 
-    def add_turn(self, session: str, user: str, assistant: str, *, context: str = "primary") -> int:
+    def epoch(self, session: str) -> int:
+        rows = self._read("SELECT generation FROM session_epochs WHERE session = ?", (session,))
+        return int(rows[0][0]) if rows else 0
+
+    def add_turn(self, session: str, user: str, assistant: str, *, context: str = "primary",
+                 generation: Optional[int] = None, author: Optional[dict[str, Any]] = None) -> int:
         """Commit one completed turn; returns undelivered characters still open
         (unsealed) for the flush threshold."""
         now = self._clock()
 
         def work() -> int:
-            undone = self._db.execute("SELECT at FROM rewinds WHERE session = ?", (session,)).fetchone()
-            if undone is not None and 0 <= now - undone[0] <= UNDO_GRACE_S:
-                # The undone turn, queued before the undo and arriving after it.
+            if generation is not None and generation != self.epoch(session):
                 self._bump("undo_discarded_parts", sum(1 for text in (user, assistant) if text))
                 return self._open_chars()
             for role, text in (("user", user), ("assistant", assistant)):
@@ -311,11 +345,26 @@ class CaptureQueue:
                     (session, digest, now - PREPAID_TTL_S),
                 ).rowcount
                 if spent:
+                    if role == "user" and author:
+                        enriched = self._db.execute(
+                            "UPDATE parts SET author = ? WHERE session = ? AND digest = ? "
+                            "AND origin = 'checkpoint' AND batch_id IS NULL",
+                            (json.dumps(author), session, digest),
+                        ).rowcount
+                        if not enriched:
+                            # Sealed batches are immutable (their hash is the
+                            # retry identity). Preserve newly supplied provenance
+                            # separately even if that checkpoint is already sent.
+                            attribution = f"Checkpointed message sha256:{digest}: {text}"
+                            self._insert_part(session, context, "user_attribution", attribution,
+                                              part_digest("user_attribution", attribution), "turn", now, author=author)
                     continue  # the checkpoint archived this row before its turn completed
-                self._insert_part(session, context, role, text, digest, "turn", now)
+                self._insert_part(session, context, role, text, digest, "turn", now,
+                                  author=author if role == "user" else None)
                 self._db.execute(
                     "INSERT OR IGNORE INTO seen (session, digest, at) VALUES (?, ?, ?)", (session, digest, now)
                 )
+            self._check_capacity()
             return self._open_chars()
 
         return self._tx(work)
@@ -341,17 +390,46 @@ class CaptureQueue:
                     "INSERT OR REPLACE INTO prepaid (session, digest, at) VALUES (?, ?, ?)", (session, digest, now)
                 )
                 added += 1
+            if added:
+                self._check_capacity()
             return added
 
         return self._tx(work)
 
     def _insert_part(
-        self, session: str, context: str, role: str, text: str, digest: str, origin: str, now: float
+        self, session: str, context: str, role: str, text: str, digest: str, origin: str, now: float,
+        *, author: Optional[dict[str, Any]] = None,
     ) -> None:
         self._db.execute(
-            "INSERT INTO parts (session, context, role, text, digest, origin, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (session, context, role, text, digest, origin, now),
+            "INSERT INTO parts (session, context, role, text, digest, origin, created_at, author) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (session, context, role, text, digest, origin, now, json.dumps(author) if author else None),
         )
+
+    def add_delegation(self, session: str, task: str, result: str, *, child_session_id: str = "",
+                       generation: Optional[int] = None) -> None:
+        def work() -> None:
+            if generation is not None and generation != self.epoch(session):
+                return
+            for role, text in (("delegation_task", task), ("delegation_result", result)):
+                if not text:
+                    continue
+                text = f"[child_session_id={json.dumps(child_session_id)}] {text}" if child_session_id else text
+                digest = part_digest(role, text)
+                fresh = self._db.execute(
+                    "INSERT OR IGNORE INTO seen VALUES (?, ?, ?)", (session, digest, self._clock())
+                ).rowcount
+                if fresh:
+                    self._insert_part(session, "primary", role, text, digest, "delegation", self._clock())
+            self._check_capacity()
+        self._tx(work)
+
+    def _check_capacity(self) -> None:
+        total = self._db.execute(
+            "SELECT COALESCE(SUM(LENGTH(text) + COALESCE(LENGTH(author), 0)), 0) FROM parts"
+        ).fetchone()[0]
+        if total > MAX_PENDING_CHARS:
+            raise CaptureFull(f"capture queue capacity exceeded ({total} > {MAX_PENDING_CHARS} characters)")
 
     def _open_chars(self) -> int:
         row = self._db.execute("SELECT COALESCE(SUM(LENGTH(text)), 0) FROM parts WHERE batch_id IS NULL").fetchone()
@@ -359,16 +437,22 @@ class CaptureQueue:
 
     def carry_ledger(self, old: str, new: str) -> None:
         """A conversation continues under a new id (compression, a branch):
-        what was captured under the old id is known under the new one, so a
-        checkpoint there does not archive the same rows again."""
+        only server-accepted evidence is shared. Pending evidence can still be
+        removed by undo in its original session; a successor must keep its own
+        checkpoint copy until delivery establishes an independent archive."""
         if not old or not new or old == new:
             return
 
         def work() -> None:
+            self._db.execute(
+                "INSERT INTO session_epochs VALUES (?, ?) ON CONFLICT(session) "
+                "DO UPDATE SET generation = MAX(generation, excluded.generation)", (new, self.epoch(old))
+            )
             for table in ("seen", "prepaid"):
                 self._db.execute(
                     f"INSERT OR IGNORE INTO {table} (session, digest, at) "
-                    f"SELECT ?, digest, at FROM {table} WHERE session = ?",
+                    f"SELECT ?, digest, at FROM {table} ledger WHERE session = ? "
+                    "AND NOT EXISTS (SELECT 1 FROM parts p WHERE p.digest = ledger.digest)",
                     (new, old),
                 )
 
@@ -402,7 +486,6 @@ class CaptureQueue:
                     size += length
                 if chunk:
                     sealed.append(self._seal_chunk(sess, chunk, now))
-            self._enforce_bound(now)
             return sealed
 
         result = self._tx(work)
@@ -427,31 +510,6 @@ class CaptureQueue:
         self._db.executemany("UPDATE parts SET batch_id = ? WHERE id = ?", [(batch_id, row[0]) for row in rows])
         return batch_id
 
-    def _enforce_bound(self, now: float) -> None:
-        total = int(
-            self._db.execute(
-                "SELECT COALESCE(SUM(chars), 0) FROM batches WHERE state IN ('sealed', 'failed')"
-            ).fetchone()[0]
-        )
-        if total <= MAX_PENDING_CHARS:
-            return
-        for batch_id, chars in self._db.execute(
-            "SELECT batch_id, chars FROM batches WHERE state IN ('sealed', 'failed') ORDER BY seq"
-        ).fetchall():
-            if total <= MAX_PENDING_CHARS:
-                break
-            self._db.execute("DELETE FROM parts WHERE batch_id = ?", (batch_id,))
-            self._db.execute(
-                "UPDATE batches SET state = 'dropped', last_error = 'queue bound exceeded', delivered_at = ? "
-                "WHERE batch_id = ?",
-                (now, batch_id),
-            )
-            total -= int(chars)
-            logger.warning(
-                "MindGraph capture queue is over %d characters; dropped undelivered batch %s (%d characters)",
-                MAX_PENDING_CHARS, batch_id[:12], chars,
-            )
-
     def discard_session(self, session: str) -> int:
         """/undo: nothing unsent from this conversation becomes durable. Hermes
         does not say how far the undo went, so every unsent row goes, and the
@@ -460,6 +518,10 @@ class CaptureQueue:
         now = self._clock()
 
         def work() -> int:
+            self._db.execute(
+                "INSERT INTO session_epochs VALUES (?, 1) ON CONFLICT(session) "
+                "DO UPDATE SET generation = generation + 1", (session,)
+            )
             self._db.execute("INSERT OR REPLACE INTO rewinds (session, at) VALUES (?, ?)", (session, now))
             rows = self._db.execute(
                 "SELECT p.id, p.digest FROM parts p LEFT JOIN batches b ON b.batch_id = p.batch_id "
@@ -524,7 +586,7 @@ class CaptureQueue:
                 if not force and row[7] > now:
                     return None
                 parts = self._db.execute(
-                    "SELECT role, text FROM parts WHERE batch_id = ? ORDER BY id", (row[0],)
+                    "SELECT role, text, author FROM parts WHERE batch_id = ? ORDER BY id", (row[0],)
                 ).fetchall()
                 if not parts:
                     # Its text is gone (another process delivered it): nothing to send.
@@ -668,6 +730,7 @@ class CaptureQueue:
                 "SELECT COUNT(*) FROM batches WHERE state = 'delivered' AND job_status = 'failed'"
             )[0][0]
             undone = self._read("SELECT value FROM meta WHERE key = 'undo_discarded_parts'")
+            rejected = self._read("SELECT value FROM meta WHERE key = 'capacity_rejections'")
         report: dict[str, Any] = {
             "durable": self.durable,
             "buffered_parts": int(open_parts),
@@ -679,6 +742,7 @@ class CaptureQueue:
             "delivered_batches": int(counts.get("delivered", 0)),
             "failed_extraction_jobs": int(failed_jobs),
             "undo_discarded_parts": int(undone[0][0]) if undone else 0,
+            "capacity_rejections": int(rejected[0][0]) if rejected else 0,
         }
         if oldest is not None:
             report["oldest_pending_age_s"] = max(0, int(self._clock() - oldest))

@@ -1,6 +1,6 @@
 [project]
 name = "hermes-mindgraph"
-version = "1.1.0"
+version = "1.2.0"
 description = "Hermes Agent memory provider plugin: MindGraph"
 requires-python = ">=3.11"
 license = { text = "MIT" }

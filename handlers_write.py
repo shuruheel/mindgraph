@@ -69,15 +69,51 @@ def handle_remember(rt: Runtime, args: dict[str, Any]) -> str:
         else:
             return err("forget requires uid or custom_id")
         options = {}
-        if args.get("dry_run") is True:
-            options["dry_run"] = True
         if isinstance(args.get("cascade"), bool):
             options["cascade"] = args["cascade"]
         if _nonblank(args.get("reason")):
             options["reason"] = args["reason"]
         if isinstance(agent_id, str):
             options["agent_id"] = agent_id
-        return ok(rt.client.forget(**target, **options))
+        if args.get("dry_run") is True or args.get("confirm") is not True:
+            preview = rt.client.forget(**target, **options, dry_run=True)
+            if args.get("dry_run") is True:
+                return ok(preview)
+            return ok({
+                "confirmation_required": True,
+                "removed": False,
+                "message": "Nothing was removed. This is a preview of what forget would remove. "
+                "Call forget again with the same target and confirm: true to remove it.",
+                "preview": preview,
+            })
+        removed = rt.client.forget(**target, **options)
+        return ok({
+            **removed,
+            "undo_hint": "To undo: mindgraph_remember action restore with this uid and these edge_uids.",
+        })
+    if action == "restore":
+        uid = _nonblank(args.get("uid"))
+        if not uid:
+            return err("restore requires uid (the uid returned by forget)")
+        edges = args.get("edge_uids", [])
+        if not isinstance(edges, list):
+            return err("edge_uids must be an array")
+        edges = list(dict.fromkeys(edge for edge in edges if isinstance(edge, str) and edge.strip()))
+        if len(edges) > 500:
+            return err("restore accepts at most 500 edge_uids")
+        actor = {"agent_id": agent_id} if isinstance(agent_id, str) else {}
+        node = rt.client.restore(uid, **actor)
+        restored, failed = [], []
+        for edge in edges:
+            try:
+                rt.client.evolve(action="restore_edge", uid=edge, **actor)
+                restored.append(edge)
+            except Exception as exc:
+                failed.append({"uid": edge, "error": str(exc)})
+        return ok({
+            "action": "restored", "uid": uid, "node": node, "edges_restored": restored,
+            **({"edges_failed": failed} if failed else {}),
+        })
     return err(f"Unknown remember action: {action}")
 
 

@@ -207,6 +207,7 @@ def test_builtin_memory_writes_are_mirrored_by_content_key(secrets):
     provider.on_memory_write("replace", "user", "Prefers green tea", {"previous_content": "Prefers tea"})
     provider.on_memory_write("remove", "user", "", {"previous_content": "Prefers green tea"})
     provider.on_memory_write("remove", "user", "", {})  # identity unknown: no guessed forget
+    provider.on_session_end([])
 
     remembered = fake.called("remember")
     assert [args[0] for args, _ in remembered] == ["Prefers tea", "Prefers green tea"]
@@ -222,7 +223,36 @@ def test_a_failed_forget_does_not_block_the_replacement(secrets):
     provider, fake = make_provider(secrets)
     fake.responses["forget"] = MindGraphError("not found", 404, {"code": "not_found"})
     provider.on_memory_write("replace", "memory", "new text", {"previous_content": "old text"})
+    provider.on_session_end([])
     assert [args[0] for args, _ in fake.called("remember")] == ["new text"]
+
+
+def test_replacing_a_memory_with_identical_content_never_forgets_it(secrets):
+    provider, fake = make_provider(secrets)
+    provider.on_memory_write("replace", "memory", "same text", {"previous_content": " same text "})
+    provider.on_session_end([])
+    assert len(fake.called("remember")) == 1 and fake.called("forget") == []
+
+
+@pytest.mark.parametrize("context", ["subagent", "cron", "flush"])
+def test_delegation_hook_does_not_enable_non_primary_writes(secrets, context):
+    provider, fake = make_provider(secrets, agent_context=context)
+    provider.on_delegation("task", "result", child_session_id="child")
+    provider.on_session_end([])
+    assert fake.calls == []
+
+
+def test_turn_start_author_is_bound_to_the_queued_turn(secrets):
+    import contextvars
+    provider, fake = make_provider(secrets)
+    provider.on_turn_start(1, "tea", author_id="alice", author_name="Alice", author_is_bot=False)
+    queued = contextvars.copy_context()
+    provider.on_turn_start(2, "coffee", author_id="bob", author_name="Bob", author_is_bot=True)
+    queued.run(provider.sync_turn, "tea", "ok", session_id="hermes-sess")
+    provider.sync_turn("coffee", "ok", session_id="hermes-sess")
+    provider.on_session_end([])
+    content = fake.called("ingest_session")[0][0][0]
+    assert '"name": "Alice"}: tea' in content and '"name": "Bob"}: coffee' in content
 
 
 def test_session_switch_flushes_under_the_old_session_and_rebinds(secrets):

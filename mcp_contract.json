@@ -1,5 +1,5 @@
 {
-  "mcp_version": "0.25.0",
+  "mcp_version": "0.27.0",
   "tools": [
     {
       "name": "mindgraph_capture",
@@ -1073,6 +1073,12 @@
             "type": "string",
             "description": "Job ID to check status (for job_status action)"
           },
+          "wait_seconds": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 50,
+            "description": "job_status with job_id: wait up to this many seconds (max 50) for the job to finish, instead of returning at once. A job still running at the end comes back with still_running: true; call again to keep waiting."
+          },
           "format": {
             "type": "string",
             "enum": [
@@ -1121,6 +1127,12 @@
           "job_id": {
             "type": "string",
             "description": "Job ID to poll (for action='job_status')"
+          },
+          "wait_seconds": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 50,
+            "description": "job_status with job_id: wait up to this many seconds (max 50) for the job to finish, instead of returning at once. A job still running at the end comes back with still_running: true; call again to keep waiting."
           },
           "format": {
             "type": "string",
@@ -1271,7 +1283,7 @@
     },
     {
       "name": "mindgraph_remember",
-      "description": "Small-text memory fast path. 'remember' stores one fact, preference, decision or note synchronously; it is BM25- and vector-searchable the moment the call returns (the response says which). Pass a stable custom_id (e.g. 'pref:theme', 'deploy:target') so re-sending the same key UPDATES the same memory instead of creating a duplicate — that is the idempotency contract; without custom_id an exact duplicate is reused. 'forget' reversibly removes a memory by uid or custom_id (tombstone plus connected edges): call it with dry_run=true first to see the edge uids it would remove, then without. Undo with mindgraph_capture-independent server actions /evolve restore and restore_edge. Use mindgraph_capture for typed entities, sources and skills, and mindgraph_ingest for documents longer than a few paragraphs.",
+      "description": "Small-text memory fast path. 'remember' stores one fact, preference, decision or note synchronously; it is BM25- and vector-searchable the moment the call returns (the response says which). Pass a stable custom_id (e.g. 'pref:theme', 'deploy:target') so re-sending the same key UPDATES the same memory instead of creating a duplicate — that is the idempotency contract; without custom_id an exact duplicate is reused. 'forget' reversibly removes a memory by uid or custom_id (tombstone plus connected edges): the first call returns a preview of the edge uids it would remove and changes nothing; call it again with confirm=true to remove. 'restore' undoes a forget: pass the uid and the edge_uids the forget returned. Use mindgraph_capture for typed entities, sources and skills, and mindgraph_ingest for documents longer than a few paragraphs.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -1279,9 +1291,10 @@
             "type": "string",
             "enum": [
               "remember",
-              "forget"
+              "forget",
+              "restore"
             ],
-            "description": "remember = store/upsert one small text; forget = reversible removal"
+            "description": "remember = store/upsert one small text; forget = reversible removal, two steps: call once to preview, then again with confirm: true; restore = undo a forget"
           },
           "text": {
             "type": "string",
@@ -1297,11 +1310,23 @@
           },
           "uid": {
             "type": "string",
-            "description": "forget: node uid to remove (alternative to custom_id)"
+            "description": "forget: node uid to remove (alternative to custom_id). restore: the uid a forget returned"
+          },
+          "edge_uids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 500,
+            "description": "restore: the edge_uids the forget returned, to bring the memory's connections back with it"
           },
           "dry_run": {
             "type": "boolean",
             "description": "forget: preview the affected edge uids without changing anything"
+          },
+          "confirm": {
+            "type": "boolean",
+            "description": "forget: must be true to remove anything. Without it, forget returns a preview of what would be removed and changes nothing."
           },
           "cascade": {
             "type": "boolean",
@@ -1339,7 +1364,7 @@
     },
     {
       "name": "mindgraph_memory",
-      "description": "Read the portable MindGraph memory surface. Use action='context' with mode='resume' or 'continuity' for authoritative task-first work state, and mode='topic' with a short keyword query for prior knowledge relevant to the user's request. Use action='status' to inspect integration capabilities and limitations. This tool never writes; durable capture and correction use the existing typed MindGraph write tools.",
+      "description": "Read the portable MindGraph memory surface. Use action='context' with mode='brief' once at the start of a conversation for work in progress, active goals, open decisions and preferences; mode='resume' or 'continuity' for authoritative task-first work state, and mode='topic' with a short keyword query for prior knowledge relevant to the user's request. Use action='status' to inspect integration capabilities and limitations. This tool never writes; durable capture and correction use the existing typed MindGraph write tools.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -1356,9 +1381,10 @@
             "enum": [
               "topic",
               "continuity",
-              "resume"
+              "resume",
+              "brief"
             ],
-            "description": "Context strategy. topic uses query-shaped retrieval; continuity/resume use authoritative task-first resume_work."
+            "description": "Context strategy. brief is the conversation-start orientation: work in progress, active goals, open decisions and stored preferences in one bounded call. topic uses query-shaped retrieval; continuity/resume use authoritative task-first resume_work."
           },
           "query": {
             "type": "string",

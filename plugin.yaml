@@ -1,7 +1,7 @@
 manifest_version: 1
 name: mindgraph
-version: 1.1.0
-description: "MindGraph — typed knowledge-graph memory: bounded per-message recall, session transcript capture, and the full mindgraph-mcp tool surface (capture, reason, commit, plan, retrieve, remember, ingest, synthesize, ontology)."
+version: 1.2.0
+description: "MindGraph — typed knowledge-graph memory: bounded per-message recall, session transcript capture, and the mindgraph-mcp general tool surface (capture, reason, commit, plan, retrieve, remember, ingest, synthesize, ontology)."
 author: Shan Rizvi
 requires_hermes: ">=0.22.0"
 
@@ -17,6 +17,7 @@ hooks:
   - on_session_switch
   - on_pre_compress
   - on_memory_write
+  - on_delegation
 
 # Optional (not prompted; set in the profile's .env):
 #   MINDGRAPH_BASE_URL      API endpoint (default https://api.mindgraph.cloud)

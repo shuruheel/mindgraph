@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextvars
 import json
 import sqlite3
 
@@ -22,6 +23,161 @@ from hermes_mindgraph_plugin.capture import (
 )
 from hermes_mindgraph_plugin.provider import MindGraphMemoryProvider, evidence_rows
 from mindgraph import MindGraphError
+
+
+def test_required_checkpoint_capacity_failure_rolls_back_and_can_retry(secrets, home, monkeypatch):
+    provider, _ = start(home)
+    monkeypatch.setattr(provider, "_drain", lambda *a, **kw: None)
+    monkeypatch.setattr(capture_mod, "MAX_PENDING_CHARS", 30)
+    first = [{"role": "user", "content": "a" * 20}]
+    second = [{"role": "user", "content": "b" * 20}]
+    provider.on_pre_compress(first, require_checkpoint=True)
+    with pytest.raises(CaptureError, match="capacity exceeded"):
+        provider.on_pre_compress(second, require_checkpoint=True)
+    provider.on_pre_compress(first, require_checkpoint=True)
+    queue = provider._capture
+    queue.close()
+    provider._capture = queue = CaptureQueue.open(home)
+    batch = queue.claim(force=True)
+    assert batch.content == "User: " + "a" * 20, "accepted checkpoint survives overflow and restart"
+    queue.mark_delivered(batch.batch_id, Receipt())
+    provider.on_pre_compress(second, require_checkpoint=True)
+    assert queue.claim(force=True).content == "User: " + "b" * 20
+    queue.close()
+
+
+def test_rewind_rejects_a_delayed_old_context_and_keeps_immediate_identical_correction(secrets, home):
+    provider, fake = start(home)
+    provider.on_turn_start(1, "same words")
+    delayed = contextvars.copy_context()
+    provider.on_session_switch("hermes-sess", rewound=True)
+    provider.on_turn_start(1, "same words")
+    provider.sync_turn("same words", "new answer", session_id="hermes-sess")
+    delayed.run(provider.sync_turn, "same words", "old answer", session_id="hermes-sess")
+    provider.on_session_end([])
+    contents = "\n".join(args[0] for args, _ in fake.called("ingest_session"))
+    assert "new answer" in contents and "old answer" not in contents
+
+
+def test_rewind_generation_is_shared_between_connections(tmp_path, clock, queue):
+    generation = queue.epoch("s")
+    peer = reopen(tmp_path, clock)
+    peer.discard_session("s")
+    queue.add_turn("s", "stale", "old", generation=generation)
+    queue.add_turn("s", "fresh", "new", generation=queue.epoch("s"))
+    queue.seal()
+    content = queue.claim(force=True).content
+    assert "fresh" in content and "stale" not in content
+    peer.close()
+
+
+def test_speakers_and_delegated_results_survive_restart(tmp_path, clock, queue):
+    queue.add_turn("s", "I prefer tea", "Noted", author={"id": "alice", "name": "Alice", "is_bot": False})
+    queue.add_turn("s", "I prefer coffee", "Noted", author={"id": "bob", "name": "Bob", "is_bot": False})
+    queue.add_delegation("s", "Inspect backups", "The latest backup is verified", child_session_id="child-1")
+    queue.add_delegation("s", "Inspect backups", "The latest backup is verified", child_session_id="child-1")
+    queue.close()
+    survivor = reopen(tmp_path, clock)
+    survivor.seal()
+    content = survivor.claim(force=True).content
+    assert '"id": "alice"' in content and '"id": "bob"' in content
+    assert "Delegated task:" in content and 'child_session_id="child-1"' in content
+    assert content.count("The latest backup is verified") == 1
+    survivor.close()
+
+
+def test_upgrade_repairs_ledger_for_previously_dropped_evidence(tmp_path):
+    path = tmp_path / "old.db"
+    db = sqlite3.connect(path)
+    db.executescript(capture_mod._DDL)
+    db.execute("INSERT INTO seen VALUES ('s', ?, 1)", (capture_mod.part_digest("user", "lost"),))
+    db.execute("INSERT INTO batches(batch_id,seq,session,context,origin,chars,part_count,state,created_at) "
+               "VALUES ('old',1,'s','primary','checkpoint',4,1,'dropped',1)")
+    db.commit()
+    db.close()
+    upgraded = CaptureQueue(path)
+    assert upgraded.add_evidence("s", [("user", "lost")]) == 1
+    upgraded.seal()
+    assert upgraded.claim(force=True).content == "User: lost"
+    upgraded.close()
+
+
+def test_upgrade_does_not_trust_an_orphaned_v1_branch_alias(tmp_path):
+    path = tmp_path / "old.db"
+    db = sqlite3.connect(path)
+    db.executescript(capture_mod._DDL)
+    # Original text was undone, and even the old rewind receipt has expired.
+    digest = capture_mod.part_digest("user", "lost branch evidence")
+    db.execute("INSERT INTO seen VALUES ('branch', ?, 1)", (digest,))
+    db.execute("INSERT INTO prepaid VALUES ('branch', ?, 1)", (digest,))
+    db.commit()
+    db.close()
+    upgraded = CaptureQueue(path)
+    assert upgraded.add_evidence("branch", [("user", "lost branch evidence")]) == 1
+    upgraded.seal()
+    assert upgraded.claim(force=True).content == "User: lost branch evidence"
+    upgraded.close()
+
+
+def test_successor_checkpoint_does_not_trust_an_undoable_predecessor(queue):
+    queue.add_turn("original", "evidence", "answer")
+    queue.seal()
+    queue.carry_ledger("original", "branch")
+    queue.discard_session("original")
+    assert queue.add_evidence("branch", [("user", "evidence"), ("assistant", "answer")]) == 2
+    queue.seal()
+    assert "evidence" in queue.claim(force=True).content
+
+
+@pytest.mark.parametrize("delivered", [False, True])
+def test_author_arriving_after_a_checkpoint_is_preserved(queue, delivered):
+    queue.add_evidence("s", [("user", "my preference")])
+    if delivered:
+        (batch_id,) = queue.seal()
+        queue.mark_delivered(batch_id, Receipt())
+    queue.add_turn("s", "my preference", "Noted", author={"id": "alice"})
+    queue.seal()
+    text = queue.claim(force=True).content
+    assert '"id": "alice"' in text and "my preference" in text
+    assert ("User attribution" in text) == delivered
+
+
+def test_compression_preserves_turn_generation_and_author_across_undo(secrets, home):
+    provider, fake = start(home)
+    provider.on_turn_start(1, "same", author_id="alice")
+    provider.on_session_switch("compressed", reason="compression")
+    delayed = contextvars.copy_context()
+    provider.on_session_switch("compressed", rewound=True)
+    provider.on_turn_start(1, "same", author_id="bob")
+    delayed.run(provider.sync_turn, "same", "old", session_id="compressed")
+    provider.sync_turn("same", "new", session_id="compressed")
+    provider.on_session_end([])
+    text = "\n".join(args[0] for args, _ in fake.called("ingest_session"))
+    assert '"id": "bob"' in text and "new" in text and "old" not in text
+
+
+def test_capture_without_a_turn_context_fails_closed(secrets, home):
+    provider, fake = start(home)
+    provider.on_session_switch("hermes-sess", rewound=True)
+    contextvars.Context().run(provider.sync_turn, "unknown turn", "unknown reply", session_id="hermes-sess")
+    provider.on_session_end([])
+    assert fake.called("ingest_session") == []
+
+
+def test_isolated_host_reports_capture_limit_but_keeps_checkpoints_and_mirroring(secrets, home, monkeypatch):
+    monkeypatch.setenv("HERMES_PLUGIN_HOST_PROCESS", "1")
+    provider, fake = start(home)
+    provider.on_turn_start(1, "not automatically captured")
+    provider.sync_turn("not automatically captured", "reply", session_id="hermes-sess")
+    provider.on_delegation("task", "result", child_session_id="child")
+    provider.on_memory_write("add", "memory", "explicit memory")
+    provider.on_session_end([])
+    assert fake.called("ingest_session") == [] and len(fake.called("remember")) == 1
+    status = json.loads(provider.handle_tool_call("mindgraph_memory", {"action": "status"}))
+    assert not status["integration"]["automatic_capture"]
+    assert any("isolated plugin-host" in item["message"] for item in status["degradation"])
+    provider.on_pre_compress([{"role": "user", "content": "explicit checkpoint"}], require_checkpoint=True)
+    assert "explicit checkpoint" in fake.called("ingest_session")[0][0][0]
 
 
 class Clock:
@@ -162,16 +318,20 @@ def test_undo_never_reaches_what_the_server_already_has(queue):
     assert queue.status()["delivered_batches"] == 1
 
 
-def test_the_bound_drops_oldest_undelivered_batches_and_says_so(queue, monkeypatch, caplog):
+def test_capacity_rejects_new_evidence_without_evicting_accepted_batches(queue, monkeypatch):
     monkeypatch.setattr(capture_mod, "MAX_PENDING_CHARS", 30)
     queue.add_turn("s", "o" * 20, "")
     queue.seal()
-    queue.add_turn("s", "n" * 20, "")
+    with pytest.raises(CaptureError, match="capacity exceeded"):
+        queue.add_turn("s", "n" * 20, "")
     queue.seal()
     status = queue.status()
-    assert status["dropped_batches"] == 1 and status["pending_batches"] == 1
-    assert "n" * 20 in queue.claim(force=True).content, "the newest text is what is kept"
-    assert "dropped undelivered batch" in caplog.text
+    assert status["dropped_batches"] == 0 and status["pending_batches"] == 1
+    assert status["capacity_rejections"] == 1
+    batch = queue.claim(force=True)
+    assert "o" * 20 in batch.content
+    queue.mark_delivered(batch.batch_id, Receipt())
+    assert queue.add_evidence("s", [("user", "n" * 20)]) == 1, "a rejected row leaves no seen record"
 
 
 def test_a_parked_batch_keeps_its_text_and_returns_on_request(queue):
@@ -286,12 +446,12 @@ def test_delivered_text_is_not_left_in_the_file(tmp_path, queue):
 
 
 def test_an_undone_turn_still_in_hermes_queue_is_not_captured_when_it_arrives(queue, clock):
+    generation = queue.epoch("s")
     queue.add_turn("s", "kept before the undo?", "ok")
     queue.discard_session("s")
-    queue.add_turn("s", "retracted, arriving late", "noted")  # queued before the undo, run after it
+    queue.add_turn("s", "retracted, arriving late", "noted", generation=generation)
     assert queue.status()["buffered_parts"] == 0
-    clock.now += capture_mod.UNDO_GRACE_S + 1
-    queue.add_turn("s", "a real new turn", "ok")
+    queue.add_turn("s", "a real new turn", "ok", generation=queue.epoch("s"))
     status = queue.status()
     assert status["buffered_parts"] == 2 and status["undo_discarded_parts"] == 4
 
@@ -299,6 +459,10 @@ def test_an_undone_turn_still_in_hermes_queue_is_not_captured_when_it_arrives(qu
 def test_a_conversation_renamed_by_compression_keeps_its_ledger(queue):
     queue.add_turn("before", "tail question", "tail answer")
     queue.add_evidence("before", [("user", "asked mid-turn")])
+    queue.seal()
+    batch = queue.claim(force=True)
+    delivered_content = batch.content
+    queue.mark_delivered(batch.batch_id, Receipt())
     queue.carry_ledger("before", "after")
     assert queue.add_evidence("after", [("user", "tail question"), ("assistant", "tail answer")]) == 0
     queue.add_turn("after", "asked mid-turn", "its answer")
@@ -307,7 +471,7 @@ def test_a_conversation_renamed_by_compression_keeps_its_ledger(queue):
     while (batch := queue.claim(force=True)) is not None:
         contents.append(batch.content)
         queue.mark_delivered(batch.batch_id, Receipt())
-    assert "\n".join(contents).count("asked mid-turn") == 1
+    assert "\n".join([delivered_content, *contents]).count("asked mid-turn") == 1
 
 
 def test_a_checkpoints_claim_on_a_turn_lapses_if_the_turn_never_completes(queue, clock):
@@ -772,6 +936,7 @@ def test_a_turn_the_checkpoint_archived_is_not_resent_after_compression_renames_
 
 def test_an_undone_turn_that_arrives_after_the_undo_is_never_sent(secrets, home):
     provider, fake = start(home)
+    provider.on_turn_start(1, "retracted")
     provider.on_session_switch("hermes-sess", rewound=True)
     provider.sync_turn("retracted", "noted", session_id="hermes-sess")  # was queued behind the undo
     provider.on_session_end([])
@@ -871,12 +1036,13 @@ def test_status_is_quiet_when_capture_is_healthy(secrets, home):
     }
 
 
-def test_capture_off_opens_no_queue_and_reports_none(secrets, home, tmp_path):
+def test_capture_off_leaves_transcript_empty_but_allows_the_memory_outbox(secrets, home, tmp_path):
     secrets["MINDGRAPH_AUTO_CAPTURE"] = "off"
     provider, fake = start(home)
     provider.sync_turn("not captured", "ok", session_id="hermes-sess")
     provider.on_session_end([])
-    assert not (tmp_path / "profile" / "mindgraph").exists()
+    assert provider._capture is None
+    assert provider._store.status()["buffered_parts"] == 0
     assert "capture" not in json.loads(provider.handle_tool_call("mindgraph_memory", {"action": "status"}))
 
 

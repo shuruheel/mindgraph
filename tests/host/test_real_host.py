@@ -13,6 +13,7 @@ import json
 import os
 import shutil
 import sqlite3
+import threading
 import time
 from pathlib import Path
 
@@ -362,12 +363,116 @@ def test_undo_keeps_retracted_turns_from_ever_being_sent(home, server):
 def test_undo_wins_even_when_hermes_runs_it_before_the_turns_own_sync(home, server):
     """Hermes calls the rewind hook inline and does not drain its worker first."""
     manager, _ = boot(home)
+    manager.on_turn_start(1, "My password is hunter2-do-not-store")
     manager.on_session_switch("host-session", rewound=True)
     manager.sync_all("My password is hunter2-do-not-store", "Noted.", session_id="host-session")
     assert manager.flush_pending(10)
     manager.on_session_end([])
     manager.shutdown_all()
     assert server.ingested() == []
+
+
+def test_queued_pre_undo_turn_is_rejected_after_a_fast_new_turn_starts(home, server):
+    manager, _ = boot(home)
+    entered, release = threading.Event(), threading.Event()
+
+    def hold_worker():
+        entered.set()
+        assert release.wait(5)
+
+    manager._submit_background(hold_worker)
+    assert entered.wait(5)
+    try:
+        manager.on_turn_start(1, "Repeat this")
+        manager.sync_all("Repeat this", "obsolete response", session_id="host-session")
+        manager.on_session_switch("host-session", rewound=True)
+        manager.on_turn_start(1, "Repeat this")
+        manager.sync_all("Repeat this", "corrected response", session_id="host-session")
+    finally:
+        release.set()
+    assert manager.flush_pending(5)
+    manager.on_session_end([])
+    manager.shutdown_all()
+    content = "\n".join(body["content"] for body in server.ingested())
+    assert "corrected response" in content and "obsolete response" not in content
+
+
+def test_delegation_and_multiple_authors_reach_the_server(home, server):
+    manager, _ = boot(home)
+    manager.on_turn_start(1, "I prefer tea", author_id="alice", author_name="Alice", author_is_bot=False)
+    manager.sync_all("I prefer tea", "Noted", session_id="host-session",
+                     turn_author={"id": "alice", "name": "Alice", "is_bot": False})
+    manager.on_turn_start(2, "I prefer coffee", author_id="bob", author_name="Bob", author_is_bot=False)
+    manager.sync_all("I prefer coffee", "Noted", session_id="host-session",
+                     turn_author={"id": "bob", "name": "Bob", "is_bot": False})
+    manager.on_delegation("Inspect backups", "Last backup verified", child_session_id="child-1")
+    assert manager.flush_pending(5)
+    manager.on_session_end([])
+    manager.shutdown_all()
+    content = "\n".join(body["content"] for body in server.ingested())
+    assert '"id": "alice"' in content and '"id": "bob"' in content
+    assert 'child_session_id="child-1"' in content and "Delegated result: " in content
+    assert "Last backup verified" in content
+
+
+def test_required_checkpoint_overflow_blocks_the_host_and_preserves_prior_evidence(home, server, monkeypatch):
+    manager, provider = boot(home)
+    import importlib
+    capture = importlib.import_module(provider.__class__.__module__.rsplit(".", 1)[0] + ".capture")
+    monkeypatch.setattr(capture, "MAX_PENDING_CHARS", 30)
+    monkeypatch.setattr(provider, "_drain", lambda *a, **kw: None)
+    first = [{"role": "user", "content": "a" * 20}]
+    second = [{"role": "user", "content": "b" * 20}]
+    manager.on_pre_compress(first, evidence_messages=evidence(first), require_checkpoint=True)
+    with pytest.raises(RuntimeError, match="capacity exceeded"):
+        manager.on_pre_compress(second, evidence_messages=evidence(second), require_checkpoint=True)
+    assert provider._capture.claim(force=True).content == "User: " + "a" * 20
+    manager.shutdown_all()
+
+
+def test_memory_mirroring_retries_after_outage_even_with_transcript_capture_off(home, server, monkeypatch):
+    monkeypatch.setenv("MINDGRAPH_AUTO_CAPTURE", "off")
+    manager, provider = boot(home)
+    server.failures["/memory/remember"] = [503] * 20
+    manager.on_memory_write("replace", "user", "new preference", metadata={"previous_content": "old preference"})
+    manager.on_session_end([])
+    status = json.loads(manager.handle_tool_call("mindgraph_memory", {"action": "status"}))
+    assert status["memory_mirror"]["pending_operations"] == 2
+    assert server.bodies("/memory/forget") == [], "new content must be saved before old content is removed"
+    server.failures.clear()
+    manager.on_session_end([])
+    assert provider._outbox.status()["pending_operations"] == 0
+    assert len(server.bodies("/memory/forget")) == 1
+    assert server.ingested() == []
+    manager.shutdown_all()
+
+
+def test_real_isolated_host_reports_capture_limit_and_keeps_memory_mirroring(home, server):
+    from hermes_cli.plugin_isolation import user_plugin_host
+    (home / "config.yaml").write_text("plugins:\n  isolation: host\nmemory:\n  provider: mindgraph\n")
+    # The child binds profile secrets from disk, not the parent's test environment.
+    (home / ".env").write_text(f"MINDGRAPH_API_KEY=mg_host_test_key\nMINDGRAPH_BASE_URL={server.url}\n")
+    manager = None
+    try:
+        manager, _ = boot(home)
+        manager.on_turn_start(1, "ordinary turn")
+        manager.sync_all("ordinary turn", "reply", session_id="host-session")
+        assert manager.flush_pending(5)
+        manager.on_memory_write("add", "memory", "explicit memory")
+        manager.on_session_end([])
+        status = json.loads(manager.handle_tool_call("mindgraph_memory", {"action": "status"}))
+        assert not status["integration"]["automatic_capture"]
+        assert any("isolated plugin-host" in item["message"] for item in status["degradation"])
+        assert server.ingested() == [] and len(server.bodies("/memory/remember")) == 1
+        transcript = [{"role": "user", "content": "required checkpoint evidence"}]
+        manager.on_pre_compress(transcript, evidence_messages=evidence(transcript), require_checkpoint=True)
+        assert "required checkpoint evidence" in server.ingested()[0]["content"]
+    finally:
+        if manager:
+            manager.shutdown_all()
+        host = user_plugin_host()
+        if host:
+            host.shutdown()
 
 
 def test_a_new_conversation_flushes_the_old_one_under_its_own_id(home, server):
@@ -456,7 +561,8 @@ def test_capture_off_means_no_checkpoint_capability(home, server, monkeypatch):
     assert manager.flush_pending(10)
     manager.on_session_end([])
     manager.shutdown_all()
-    assert server.ingested() == [] and not (home / "mindgraph" / "capture.db").exists()
+    assert server.ingested() == []
+    assert queue_counts(home)["open_parts"] == 0, "the database remains available for built-in memory mirroring"
 
 
 # ── Tools and the built-in memory mirror ───────────────────────────────────
@@ -499,6 +605,7 @@ def test_builtin_memory_writes_are_mirrored(home, server):
     manager, _ = boot(home)
     manager.on_memory_write("add", "user", "Prefers green tea")
     manager.on_memory_write("replace", "user", "Prefers oolong", metadata={"previous_content": "Prefers green tea"})
+    manager.on_session_end([])
     remembered = [body["text"] for body in server.bodies("/memory/remember")]
     assert remembered == ["Prefers green tea", "Prefers oolong"]
     assert len(server.bodies("/memory/forget")) == 1

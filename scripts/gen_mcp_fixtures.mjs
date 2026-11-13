@@ -62,6 +62,12 @@ const CASES = [
   ],
   ["remember", "mindgraph_remember", { action: "remember", text: "Prefers tea", custom_id: "pref-tea", label: "Tea" }],
   ["forget", "mindgraph_remember", { action: "forget", custom_id: "pref-tea", dry_run: true, reason: "test" }],
+  ["forget_preview", "mindgraph_remember", { action: "forget", uid: "n1" }],
+  ["forget_confirmed", "mindgraph_remember", { action: "forget", uid: "n1", confirm: true }],
+  ["restore", "mindgraph_remember", { action: "restore", uid: "n1", edge_uids: ["e1", "e2", "e1"] }],
+  ["ingest_wait", "mindgraph_ingest", { action: "job_status", job_id: "j1", wait_seconds: 50 }],
+  ["synthesis_wait", "mindgraph_synthesize", { action: "job_status", job_id: "j2", wait_seconds: 50 }],
+  ["memory_brief", "mindgraph_memory", { action: "context", mode: "brief", project_uid: "p1" }],
   ["capture_journal", "mindgraph_capture", { action: "journal", label: "Day", content: "Shipped", mood: "good", tags: ["x"] }],
   [
     "capture_entity",

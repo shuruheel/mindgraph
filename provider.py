@@ -15,17 +15,21 @@ mindgraph-mcp tool surface.
 - ``on_pre_compress`` is a checkpoint (API v2): with ``require_checkpoint`` the
   transcript rows about to be compressed are committed first, and a failed
   commit raises so Hermes keeps the uncompressed transcript.
-- ``on_memory_write`` mirrors Hermes's built-in memory into ``/memory/remember``.
+- ``on_memory_write`` durably queues ordered built-in memory changes for replay.
+- ``on_delegation`` captures parent-side tasks/results with child session identity.
 - Tool calls route through ``dispatch.handle_tool`` behind the governance gate.
 
-Automatic writes run only for the ``primary`` agent context.
+Ordinary automatic writes run only for the ``primary`` agent context; required
+checkpoints also run in forks. Isolated RPC hosts disable turn/delegation capture.
 """
 
 from __future__ import annotations
 
+import contextvars
 import hashlib
 import inspect
 import logging
+import os
 import sqlite3
 import threading
 import time
@@ -50,6 +54,7 @@ from .capture import (
 from .dispatch import contract, handle_tool, static_tool_schemas
 from .governance import GovernanceGate
 from .memory_tool import MemoryRuntimeConfig
+from .mirroring import MemoryOutbox
 from .recall import RecallEngine, RecallQuery, load_config
 from .render import render_resume_context
 from .runtime import DEFAULT_AGENT_ID, DEFAULT_BASE_URL, HARNESS, Runtime
@@ -64,7 +69,8 @@ try:  # Background work must carry the profile's contextvars (HERMES_HOME, secre
 except ImportError:  # pragma: no cover - older Hermes
 
     def spawn_context_thread(target, *, name, daemon=True, args=(), kwargs=None):  # type: ignore[misc]
-        return threading.Thread(target=target, name=name, daemon=daemon, args=args, kwargs=kwargs)
+        context = contextvars.copy_context()
+        return threading.Thread(target=lambda: context.run(target, *args, **(kwargs or {})), name=name, daemon=daemon)
 
 logger = logging.getLogger(__name__)
 
@@ -171,6 +177,7 @@ class MindGraphMemoryProvider(MemoryProvider):
         self._memory_config: Optional[MemoryRuntimeConfig] = None
         self._model: str = ""
         self._auto_capture = True
+        self._isolated_host = False
         self._recall: Optional[RecallEngine] = None
         self._briefed_sessions: set[str] = set()
         # Conversation id -> the open-work lookup in flight or just finished.
@@ -182,6 +189,11 @@ class MindGraphMemoryProvider(MemoryProvider):
         # thread) both touch the pending buffer and the session bindings.
         self._lock = threading.Lock()
         self._capture: Optional[CaptureQueue] = None
+        self._store: Optional[CaptureQueue] = None
+        self._outbox: Optional[MemoryOutbox] = None
+        # Hermes copies the caller's context into its serialized sync worker.
+        # A queued pre-undo call keeps its old generation even after a new turn starts.
+        self._turn_context = contextvars.ContextVar(f"mindgraph-turn-{id(self)}", default=None)
         self._deliverer: Optional[Deliverer] = None
         # Hermes conversation id -> open MindGraph Session uid.
         self._mg_sessions: dict[str, str] = {}
@@ -228,6 +240,9 @@ class MindGraphMemoryProvider(MemoryProvider):
     # ── Lifecycle ──────────────────────────────────────────────────────────
 
     def initialize(self, session_id: str, **kwargs: Any) -> None:
+        # RPC hooks have separate contexts and no transportable turn identity.
+        # Required checkpoints receive an explicit snapshot and remain safe.
+        self._isolated_host = os.environ.get("HERMES_PLUGIN_HOST_PROCESS") == "1"
         base_url = (get_secret("MINDGRAPH_BASE_URL", "") or "").strip() or DEFAULT_BASE_URL
         agent_id = (get_secret("MINDGRAPH_AGENT_ID", "") or "").strip() or DEFAULT_AGENT_ID
         api_key = get_secret("MINDGRAPH_API_KEY", "") or ""
@@ -253,9 +268,14 @@ class MindGraphMemoryProvider(MemoryProvider):
             "false",
             "off",
         )
+        self._store = CaptureQueue.open(kwargs.get("hermes_home"))
+        self._outbox = MemoryOutbox(self._store, self._send_memory_operation)
+        if self._can_write():
+            self._outbox.kick(spawn_context_thread, force=True)
         if self._auto_capture:
             # Bound to this profile's directory, like every other binding here.
-            self._capture = CaptureQueue.open(kwargs.get("hermes_home"))
+            self._capture = self._store
+            self._turn_context.set((session_id, self._capture.epoch(session_id), {}))
             self._deliverer = Deliverer(self._capture, self._send_batch, self._find_batch)
             self._recover_capture()
         self._recall = RecallEngine(
@@ -269,9 +289,16 @@ class MindGraphMemoryProvider(MemoryProvider):
             base_url=base_url,
             org_id=org_id,
             agent_id=agent_id,
-            automatic_capture=self._auto_capture and self._rt.write_enabled,
+            automatic_capture=self._auto_capture and self._rt.write_enabled and not self._isolated_host,
+            capture_unavailable_reason=(
+                "Automatic turn/delegation capture is disabled in Hermes isolated plugin-host mode: "
+                "its RPC hooks do not carry turn identity across undo. Required checkpoints, "
+                "built-in memory mirroring, recall and tools remain available."
+                if self._isolated_host and self._auto_capture else None
+            ),
             automatic_delivery=self._recall.config.enabled,
             capture_status=self._capture_status if self._capture is not None else None,
+            mirror_status=self._outbox.status,
         )
 
     def system_prompt_block(self) -> str:
@@ -282,6 +309,11 @@ class MindGraphMemoryProvider(MemoryProvider):
     def on_turn_start(self, turn_number: int, message: str, **kwargs: Any) -> None:
         if self._rt is not None:
             self._rt.turn_number = max(int(turn_number or 0), 0)
+            if self._capture is not None:
+                self._turn_context.set((self._rt.session_id, self._capture.epoch(self._rt.session_id),
+                                        self._author(kwargs, prefix="author_")))
+        if self._outbox is not None and self._can_write():
+            self._outbox.kick(spawn_context_thread)
         if kwargs.get("model"):
             self._model = str(kwargs["model"])
         # The person's message before this one, from Hermes's own transcript: a
@@ -425,11 +457,29 @@ class MindGraphMemoryProvider(MemoryProvider):
             self._mg_sessions[harness_session_id] = uid
         return uid
 
+    @staticmethod
+    def _author(values: dict[str, Any], *, prefix: str = "") -> dict[str, Any]:
+        result = {}
+        for key in ("id", "name", "is_bot"):
+            value = values.get(prefix + key)
+            if isinstance(value, (str, int, bool)) and value is not None:
+                result[key] = value
+        return result if result.get("id") or result.get("name") else {}
+
+    def _capture_context(self, session: str) -> tuple[int, dict[str, Any]]:
+        bound = self._turn_context.get()
+        if bound is None or bound[0] != session:
+            # Legacy/direct callers and an asynchronous /new boundary can lack
+            # a binding. They can only claim the initial generation, never the
+            # current one: after any undo this fails closed in the queue.
+            return 0, {}
+        return bound[1], bound[2]
+
     def sync_turn(self, user_content: str, assistant_content: str, *, session_id: str = "", **kwargs: Any) -> None:
         """One local commit. Delivery is started, never waited for: this runs
         on Hermes's single background worker, and a turn waiting behind a slow
         server would not be committed at all if Hermes exited meanwhile."""
-        if not self._can_write() or self._capture is None:
+        if not self._can_write() or self._capture is None or self._isolated_host:
             return
         user, assistant = (user_content or "").strip(), (assistant_content or "").strip()
         if not (user or assistant):
@@ -437,15 +487,30 @@ class MindGraphMemoryProvider(MemoryProvider):
         try:
             # Tagged with the turn's own conversation: a switch may already have
             # rebound the runtime by the time this queued call runs.
-            open_chars = self._capture.add_turn(
-                session_id or self._rt.session_id, user, assistant, context=self._rt.agent_context
-            )
+            session = session_id or self._rt.session_id
+            generation, author = self._capture_context(session)
+            if isinstance(kwargs.get("turn_author"), dict):
+                author = self._author(kwargs["turn_author"])
+            open_chars = self._capture.add_turn(session, user, assistant, context=self._rt.agent_context,
+                                                generation=generation, author=author)
             if open_chars >= FLUSH_CHARS:
                 self._capture.seal()
         except CaptureError as exc:
             logger.warning("MindGraph could not queue a turn for capture: %s", exc)
+            self._drain("capture rejected", force=True, wait_s=0.0)
             return
         self._drain("turn", force=open_chars >= FLUSH_CHARS, wait_s=0.0)
+
+    def on_delegation(self, task: str, result: str, *, child_session_id: str = "", **kwargs: Any) -> None:
+        if not self._can_write() or self._capture is None or self._isolated_host:
+            return
+        bound = self._turn_context.get()
+        session = bound[0] if bound is not None else self._rt.session_id
+        generation, _ = self._capture_context(session)
+        self._capture.add_delegation(session, task, result, child_session_id=child_session_id, generation=generation)
+        # A delegation may carry the only copy of its result in the parent.
+        self._capture.seal(session)
+        self._drain("delegation", force=True, wait_s=0.0)
 
     def _flush(self, reason: str, *, wait_s: float) -> None:
         """Seal what is open, then deliver. The seal is the durable step and
@@ -633,6 +698,7 @@ class MindGraphMemoryProvider(MemoryProvider):
             self._flush("pre-compress", wait_s=CHECKPOINT_WAIT_S)
         except CaptureError:
             if require_checkpoint:
+                self._drain("checkpoint rejected", force=True, wait_s=0.0)
                 raise
             logger.warning("MindGraph pre-compress flush failed (non-fatal)", exc_info=True)
         return ""
@@ -640,30 +706,31 @@ class MindGraphMemoryProvider(MemoryProvider):
     def on_memory_write(
         self, action: str, target: str, content: str, metadata: Optional[dict[str, Any]] = None
     ) -> None:
-        """Mirror built-in memory writes, keyed by content so replays upsert."""
+        """Commit a mirror operation before returning; delivery may be retried."""
         rt = self._rt
-        if rt is None or not self._can_write():
+        if rt is None or not self._can_write() or self._outbox is None:
             return
         previous = (metadata or {}).get("previous_content")
-        # Without the replaced entry's content its identity is unknown; never guess a forget.
-        if action in ("replace", "remove") and isinstance(previous, str) and previous.strip():
-            try:
-                rt.client.forget(
-                    custom_id=builtin_memory_custom_id(target, previous),
-                    reason=f"Hermes built-in memory {action}",
-                    agent_id=rt.agent_id,
-                )
-            except Exception as exc:  # e.g. an entry written before this provider was active
-                logger.debug("MindGraph forget of replaced built-in memory failed: %s", exc)
+        operations = []
         if action in ("add", "replace") and (content or "").strip():
-            try:
-                rt.client.remember(
-                    content.strip(),
-                    custom_id=builtin_memory_custom_id(target, content),
-                    agent_id=rt.agent_id,
-                )
-            except Exception as exc:
-                logger.warning("MindGraph mirror of built-in memory %s failed: %s", action, exc)
+            operations.append(("remember", {"text": content.strip(),
+                                           "custom_id": builtin_memory_custom_id(target, content),
+                                           "agent_id": rt.agent_id}))
+        # Save the replacement first. Forgetting identical content would delete
+        # the entry we just upserted. Unknown previous content never guesses identity.
+        if (action in ("replace", "remove") and isinstance(previous, str) and previous.strip()
+                and (action == "remove" or previous.strip() != (content or "").strip())):
+            operations.append(("forget", {"custom_id": builtin_memory_custom_id(target, previous),
+                                         "reason": f"Hermes built-in memory {action}", "agent_id": rt.agent_id}))
+        self._outbox.enqueue(operations)
+        self._outbox.kick(spawn_context_thread)
+
+    def _send_memory_operation(self, action: str, payload: dict[str, Any]) -> None:
+        if action == "remember":
+            payload = dict(payload)
+            self._rt.client.remember(payload.pop("text"), **payload)
+        elif action == "forget":
+            self._rt.client.forget(**payload)
 
     def on_session_switch(
         self,
@@ -717,6 +784,10 @@ class MindGraphMemoryProvider(MemoryProvider):
         with self._lock:
             rt.session_id = new_session_id
             rt.turn_number = 0
+        if self._capture is not None:
+            bound = self._turn_context.get()
+            author = bound[2] if bound and bound[0] == previous and kwargs.get("reason") == "compression" else {}
+            self._turn_context.set((new_session_id, self._capture.epoch(new_session_id), author))
         self._close_sessions(only=previous)
 
     def on_session_end(self, messages: list[dict[str, Any]]) -> None:
@@ -728,6 +799,8 @@ class MindGraphMemoryProvider(MemoryProvider):
         sent stays queued."""
         if not self._can_write():
             return
+        if self._outbox is not None:
+            self._outbox.kick(spawn_context_thread, force=True, wait_s=wait_s)
         try:
             self._flush(reason, wait_s=wait_s)
         except CaptureError as exc:
@@ -752,8 +825,8 @@ class MindGraphMemoryProvider(MemoryProvider):
     def shutdown(self) -> None:
         self._flush_quietly("shutdown", SHUTDOWN_WAIT_S)
         self._close_sessions()
-        if self._capture is not None:
-            self._capture.close()
+        if self._store is not None:
+            self._store.close()
         if self._rt is not None:
             self._rt.close()
 

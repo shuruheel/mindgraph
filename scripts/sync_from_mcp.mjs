@@ -36,10 +36,16 @@ const { toolsForProfile } = await import(pathToFileURL(out).href);
 
 // Hermes supplies invocation context itself (session id, turn); the model never sees it.
 // Repository/code fields belong to the coding profile's code adapter, which Hermes lacks.
-const HERMES_OMITTED = ["invocation_context", "code_refs", "repo", "repo_space_uid"];
+// `scope: workspace` requires the local MCP code adapter, also absent in Hermes.
+const HERMES_OMITTED = ["invocation_context", "code_refs", "repo", "repo_space_uid", "scope"];
 const tools = toolsForProfile("general").map((tool) => {
   const parameters = structuredClone(tool.inputSchema);
   for (const key of HERMES_OMITTED) delete parameters.properties?.[key];
+  // Hermes returns the final tool result; its provider API has no progress channel.
+  if (parameters.properties?.wait_seconds) {
+    parameters.properties.wait_seconds.description = parameters.properties.wait_seconds.description
+      .replace(", reporting progress,", ",");
+  }
   if (Array.isArray(parameters.required)) {
     parameters.required = parameters.required.filter((key) => !HERMES_OMITTED.includes(key));
   }

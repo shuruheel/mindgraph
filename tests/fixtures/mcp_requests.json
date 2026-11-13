@@ -1,5 +1,5 @@
 {
-  "mcp_version": "0.25.0",
+  "mcp_version": "0.27.0",
   "base_url": "http://mindgraph.test",
   "agent_id": "hermes",
   "invocation_context": {
@@ -219,9 +219,162 @@
           "path": "/memory/forget",
           "body": {
             "custom_id": "pref-tea",
-            "dry_run": true,
             "reason": "test",
+            "agent_id": "hermes",
+            "dry_run": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "forget_preview",
+      "tool": "mindgraph_remember",
+      "args": {
+        "action": "forget",
+        "uid": "n1"
+      },
+      "requests": [
+        {
+          "method": "POST",
+          "path": "/memory/forget",
+          "body": {
+            "uid": "n1",
+            "agent_id": "hermes",
+            "dry_run": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "forget_confirmed",
+      "tool": "mindgraph_remember",
+      "args": {
+        "action": "forget",
+        "uid": "n1",
+        "confirm": true
+      },
+      "requests": [
+        {
+          "method": "POST",
+          "path": "/memory/forget",
+          "body": {
+            "uid": "n1",
             "agent_id": "hermes"
+          }
+        }
+      ]
+    },
+    {
+      "id": "restore",
+      "tool": "mindgraph_remember",
+      "args": {
+        "action": "restore",
+        "uid": "n1",
+        "edge_uids": [
+          "e1",
+          "e2",
+          "e1"
+        ]
+      },
+      "requests": [
+        {
+          "method": "POST",
+          "path": "/evolve",
+          "body": {
+            "action": "restore",
+            "uid": "n1",
+            "agent_id": "hermes"
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/evolve",
+          "body": {
+            "action": "restore_edge",
+            "uid": "e1",
+            "agent_id": "hermes"
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/evolve",
+          "body": {
+            "action": "restore_edge",
+            "uid": "e2",
+            "agent_id": "hermes"
+          }
+        }
+      ]
+    },
+    {
+      "id": "ingest_wait",
+      "tool": "mindgraph_ingest",
+      "args": {
+        "action": "job_status",
+        "job_id": "j1",
+        "wait_seconds": 50
+      },
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/jobs/j1",
+          "body": null
+        }
+      ]
+    },
+    {
+      "id": "synthesis_wait",
+      "tool": "mindgraph_synthesize",
+      "args": {
+        "action": "job_status",
+        "job_id": "j2",
+        "wait_seconds": 50
+      },
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/jobs/j2",
+          "body": null
+        }
+      ]
+    },
+    {
+      "id": "memory_brief",
+      "tool": "mindgraph_memory",
+      "args": {
+        "action": "context",
+        "mode": "brief",
+        "project_uid": "p1"
+      },
+      "requests": [
+        {
+          "method": "POST",
+          "path": "/agent/plan",
+          "body": {
+            "action": "resume_work",
+            "scope_uids": [
+              "p1"
+            ],
+            "limit": 6,
+            "agent_id": "hermes"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/goals",
+          "body": null
+        },
+        {
+          "method": "GET",
+          "path": "/decisions",
+          "body": null
+        },
+        {
+          "method": "POST",
+          "path": "/retrieve",
+          "body": {
+            "action": "preferences",
+            "k": 8
           }
         }
       ]

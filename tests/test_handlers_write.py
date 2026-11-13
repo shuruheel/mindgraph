@@ -77,7 +77,7 @@ def test_forget_uid_takes_precedence_over_custom_id(runtime, fake_client):
         runtime, {"action": "forget", "uid": "n1", "custom_id": "pref:theme", "cascade": False, "reason": "stale"}
     )
     _, kwargs = _only_call(fake_client, "forget")
-    assert kwargs == {"uid": "n1", "cascade": False, "reason": "stale"}
+    assert kwargs == {"uid": "n1", "cascade": False, "reason": "stale", "dry_run": True}
 
 
 def test_forget_without_target_is_an_error(runtime, fake_client):
