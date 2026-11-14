@@ -189,3 +189,43 @@ estimate as total experiment cost. Scripted semantic verdicts validate mechanica
 constraints, not model judgment. A passing private deployment establishes these
 six functional scenarios, not general correction accuracy or arbitrary shared
 Entity safety.
+
+## Phase 2: candidate selection after 5d4704
+
+The original development phase is closed: d2b302 remains 4/6; 05a4d6 and
+5d4704 remain 0/6 with failed input prerequisites and no scored recall probes.
+The last run delivered two rows and one job, which ended `completed_with_errors`.
+Its one review request used 6,369 input and 241 output tokens. Six extracted
+representations all cited one user turn; the model returned identical old/new
+UIDs while explaining that no correction was justified. Validation rejected it
+before persistence. The complete conservative reservation is retained.
+
+Under the standing instruction to continue until broader acceptance succeeds,
+preregister this separate continuation before further model calls:
+
+- One additional development suite, named `phase2-development-1`, on a new
+  immutable candidate that fixes this reproduced candidate-selection defect.
+  Offline tests must prove no model call for one user turn plus an assistant
+  echo, rejection of self/unchanged-turn proposals, and preservation of legitimate
+  corrections across two user turns in one transcript. Independent contract and
+  protocol reviews must pass before execution.
+- Carry forward the two untouched confirmation suites and four agent invocations.
+  Both confirmations must pass 6/6 on the passing phase-2 candidate before the
+  actual-Hermes pair. Every scenario, scorer, prerequisite, recall default and
+  agent prompt remains unchanged. A failed phase-2 development or confirmation
+  ends this phase; no automatic rerun or conversion of confirmation to development.
+- Raise the cumulative reservation ceiling explicitly from five to six suites,
+  from 30/70 to 36/84 suite jobs/rows, and from 28 to 34 review calls. Preserve the
+  existing three ledger entries, all unused portions of their reservations and
+  their original candidate identities. Record the phase-2 protocol hash and
+  prerequisite reservation IDs in a separate ledger extension; do not reset it.
+- At the previously recorded higher route rates and conservative 300,000 input
+  plus 4,096 output tokens per call, 34 reviews estimate $2.44, still within the
+  $3 review-stage planning allowance. This excludes extraction, embeddings and
+  Hermes calls; retain actual request/token telemetry rather than claiming a bill.
+
+The new backend conservatively leaves corrections wholly within one user turn
+unsupported; distinct user turns within one transcript remain eligible. A skip
+does not prove reconciliation. The unchanged stale-assertion checks still apply.
+Passing would qualify only the recorded private deployment and frozen functional
+scenarios. It would not qualify production or general correction accuracy.
