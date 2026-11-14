@@ -10,6 +10,7 @@
 - Report and disable ordinary turn/delegation capture in isolated plugin-host mode, whose RPC contract lacks the turn identity needed for correct undo. Recall, tools, mirroring and required checkpoint snapshots remain available.
 
 - Sync the general tool contract with released mindgraph-mcp 0.27.0: preview/confirm forget, restore with partial edge-failure reporting, bounded job waiting, and conversation-start briefs with partial-read warnings. Hermes omits the MCP workspace resolver and progress notifications.
+- Fix instruction extraction stopping at an escaped inline backtick, restoring the missing comprehensive-read, write and tool-tip guidance in the static system prompt.
 
 ## 1.1.0 (2026-11-11)
 
