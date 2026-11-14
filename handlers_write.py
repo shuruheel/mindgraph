@@ -111,7 +111,7 @@ def handle_remember(rt: Runtime, args: dict[str, Any]) -> str:
             except Exception as exc:
                 failed.append({"uid": edge, "error": str(exc)})
         return ok({
-            "action": "restored", "uid": uid, "node": node, "edges_restored": restored,
+            "action": "restored", "uid": uid, "node": node, "edges_restored": len(restored),
             **({"edges_failed": failed} if failed else {}),
         })
     return err(f"Unknown remember action: {action}")

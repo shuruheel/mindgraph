@@ -468,7 +468,7 @@ def _conversation_brief(rt: Runtime, args: Rec, agent_id: Optional[str], budget:
         if name != "preferences":
             values = [v for v in values if (_obj(node(v).get("props")) or {}).get("source") != "document"]
             values.sort(key=lambda v: (
-                (_obj(node(v).get("props")) or {}).get("source") == "session",
+                bool(_text((_obj(node(v).get("props")) or {}).get("source"))),
                 -(_number(node(v).get("updated_at")) or 0),
             ))
         items = [(item, _text((_obj(node(v).get("props")) or {}).get("status")))

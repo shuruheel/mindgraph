@@ -39,7 +39,7 @@ def test_restore_deduplicates_edges_and_reports_partial_failure(runtime, fake_cl
         'action': 'restore', 'uid': ' n1 ', 'edge_uids': ['e1', 'bad', 'e1', '', None, 'e2'], 'agent_id': 'a',
     }))
     assert fake_client.calls[0] == ('restore', ('n1',), {'agent_id': 'a'})
-    assert result['edges_restored'] == ['e1', 'e2']
+    assert result['edges_restored'] == 2
     assert result['edges_failed'] == [{'uid': 'bad', 'error': 'edge unavailable'}]
     assert all(kwargs['agent_id'] == 'a' for _, kwargs in fake_client.called('evolve'))
 
@@ -98,11 +98,13 @@ def test_brief_filters_document_goals_and_orders_stated_before_inferred(runtime,
     fake_client.responses['get_goals'] = [
         {'uid': 'book', 'label': 'Book goal', 'props': {'source': 'document'}},
         {'uid': 'inferred', 'label': 'Inferred goal', 'updated_at': 99, 'props': {'source': 'session'}},
+        {'uid': 'imported', 'label': 'Imported goal', 'updated_at': 100, 'props': {'source': 'import'}},
         {'uid': 'stated', 'label': 'Stated goal', 'updated_at': 1},
     ]
     result = brief(runtime, project_uid='p1', scope_uids=['p1', 'p2'], agent_id='a')
     assert 'Book goal' not in result['result']
     assert result['result'].index('Stated goal') < result['result'].index('Inferred goal')
+    assert result['result'].index('Stated goal') < result['result'].index('Imported goal')
     assert fake_client.called('plan')[0][1] == {
         'action': 'resume_work', 'limit': 6, 'scope_uids': ['p1', 'p2'], 'agent_id': 'a',
     }
@@ -131,3 +133,10 @@ def test_unsupported_workspace_scope_never_falls_back_to_unscoped_read(runtime, 
     result = brief(runtime, scope='workspace')
     assert 'scope_uids' in result['error']
     assert fake_client.calls == []
+
+
+@pytest.mark.parametrize('edges, count', [([], 0), (['e1', 'e1', 'e2'], 2)])
+def test_restore_returns_edge_count(runtime, edges, count):
+    result = json.loads(handle_remember(runtime, {'action': 'restore', 'uid': 'n1', 'edge_uids': edges}))
+    assert result['edges_restored'] == count
+    assert 'edges_failed' not in result
