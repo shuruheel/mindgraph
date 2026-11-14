@@ -8,8 +8,8 @@ thing, and the same items repeated message after message. Each has a rule here.
 - **Query.** ``/retrieve/context`` OR-joins every query token into its keyword
   leg, so a sentence is reduced to its content terms. A message with too few of
   its own ("why?", "what did we decide?") borrows the previous message's.
-- **Floor.** An item is injected only when it mentions two distinct query terms
-  (one, when the query has one). The server always returns its best matches;
+- **Floor.** An item is injected only when it mentions at least half of the usable
+  query terms and at least two distinct terms (one for a one-term query). The server always returns its best matches;
   the best match for an unrelated message is still unrelated. For a borrowed
   query, one of the message's own terms is enough, so "what about Postgres?"
   finds Postgres and is not outvoted by the topic it moved on from.
