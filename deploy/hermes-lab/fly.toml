@@ -1,0 +1,21 @@
+app = "mindgraph-hermes-lab"
+primary_region = "iad"
+kill_signal = "SIGTERM"
+kill_timeout = 30
+
+[build]
+  dockerfile = "Dockerfile"
+
+# Deliberately no services/http_service: access is through Fly SSH only.
+[env]
+  HERMES_HOME = "/data/profile"
+  MINDGRAPH_AGENT_ID = "hermes-lab"
+
+[[mounts]]
+  source = "hermes_data"
+  destination = "/data"
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory = "1gb"
