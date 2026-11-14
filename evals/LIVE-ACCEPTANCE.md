@@ -155,3 +155,37 @@ for its recorded artifacts and deployment. It does not establish production
 latency under concurrent traffic or enable the feature for unrelated users.
 Production delivery requires its own concrete artifact/config preflight.
 Independent protocol review is required before these additional paid calls.
+
+
+## V2 revision follow-up after development 05a4d6
+
+Run 05a4d6 failed input prerequisites after four delivered rows and two jobs;
+no recall probe was scored. Its report remains 0/6, alongside d2b302 at 4/6.
+The conservative reservation is retained in full: **one development suite, two
+confirmation suites, four agent invocations and 22 review reservations remain**.
+
+The next candidate follows the backend's
+[source-backed revision contract](https://github.com/shuruheel/mindgraph-rs/blob/fix/transcript-revision-review/docs/specs/transcript-revisions.md).
+Pin that contract's committed SHA and hash in the deployment manifest; the branch
+link is navigation, not immutable evidence. It uses hash-bound actual user turns
+instead of treating extraction citation hints as semantic proof, permits wholly
+atomic Concept propositions, and applies certified exact-span Entity summary
+edits without retiring Entity identities. Summary edits invalidate old vectors;
+server-owned audit certificates provide durable targets for embedding recovery.
+Source deletion retracts the unchanged correction span while preserving unrelated
+later edits. These are experimental backend behaviors, disabled by default.
+
+The collector retains both Supersedes and Describes certificates, affected node
+versions, review request/response evidence when lifecycle fences permit its
+persistence, and provider telemetry. Preserve the first defective development-2
+collector output and its separately hashed supplemental collection. No collector
+change alters the scorer or the old report.
+
+All earlier scenario, deadline, confirmation and stopping rules remain in force.
+The $3 estimate above covers added review calls only. Regenerating corrected
+summary embeddings is additional work within the same bounded extraction jobs;
+record embedding requests/tokens alongside review usage rather than treating that
+estimate as total experiment cost. Scripted semantic verdicts validate mechanical
+constraints, not model judgment. A passing private deployment establishes these
+six functional scenarios, not general correction accuracy or arbitrary shared
+Entity safety.
