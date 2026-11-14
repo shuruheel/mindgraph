@@ -229,3 +229,61 @@ unsupported; distinct user turns within one transcript remain eligible. A skip
 does not prove reconciliation. The unchanged stale-assertion checks still apply.
 Passing would qualify only the recorded private deployment and frozen functional
 scenarios. It would not qualify production or general correction accuracy.
+
+## Phase 3: structured review with GPT-6.1 Sol — 2026-11-14
+
+The four development suites remain failed and retain their original scores,
+artifacts and reservations. Five subsequent diagnostic phases also failed;
+none is relabeled as a suite or a confirmation. The separately frozen
+`SOL-REASONING-DIAGNOSTIC.md` pair passed both mechanical and independent
+source-backed review on core `6acffc549058f6b0bcc5f27e80c99d6308c1f22f`.
+Its manifest is `e067a98a256f587049382bfdd675cbba8ec0f2db9e6ef2aac493cddd28009be6`.
+That result covers two known development fixtures with no graph writes. It does
+not establish general semantic safety: a prior Luna proposal passed structural
+validation while selecting an unsupported assistant endpoint, and was rejected
+by the independent oracle. Preserve that failure and this limitation.
+
+This phase adds exactly one fresh ingestion development suite, then permits the
+two untouched confirmations only if it passes. All three must use the same
+immutable plugin/backend/configuration identity and unchanged six-scenario
+scorer. Use the private repaired clone, fresh profile and codenames each time,
+default recall settings and the existing successful-request/three-second gates.
+Every receipt and ingestion job must complete without errors before recall
+probes. Preserve the mirror remember/forget acknowledgments, negative cases,
+retirement checks, full raw reports and revision certificates. Each passing
+suite also needs independent source-backed review of its certificates and
+selected assertion endpoints before the next suite or actual-agent pair may
+start; a structural or scorer pass alone is insufficient. Record that review
+and its artifact hash in the existing reservation. No failed
+confirmation becomes development, and no unchanged-candidate suite is rerun.
+Failure closes this phase. Two 6/6 confirmations are required before the
+unchanged actual-Hermes pair (four-invocation ceiling and replacement-pair gates
+remain in force). The agent itself continues using the frozen Luna setup.
+
+The backend keeps all prior model/routing settings except curation becomes
+`openai/gpt-6.1-sol`. Its mandatory provider-default reasoning is effective even
+with the global hybrid-reasoning switch off; the adapter omits the unsupported
+disable flag and temperature. Strict schema and supported-parameter routing
+remain enabled; 4096 tokens include reasoning plus visible output. Freeze the
+built image digest, core/cloud/engine/plugin SHAs, runtime config, health/deep
+identity, preflight, helper hashes and validation in the backend manifest before
+paid ingestion. The lab remains private and the prototype remains opt-in.
+
+The ledger must preserve all ten preceding entries: four failed suites, five
+failed diagnostics and the passed Sol diagnostic, totaling 33 review
+reservations. Append a phase-3 extension only after its terminal passed verdict
+is archived. Raise cumulative ceilings from six to seven suites, 36 to 42 suite
+jobs, 84 to 98 suite rows, and 49 to 55 review reservations. The added development
+reserves six reviews; two confirmations and four possible agent captures retain
+their 16 reservations. No refunds, reset, rescoring or automatic expansion.
+
+Explicitly raise the review-stage planning allowance from $5 to $10 for the
+curation-model change. Carry the prior $4.228664 planning allowance without
+credit, and estimate all 22 future reviews (development, confirmations and
+maximum agent captures) at 75000 input plus 4096 output tokens and the recorded
+higher ordinary Sol route's $2.75/M cache-write input and $11/M output rates:
+$5.528732 additional, $9.757396 carried total. This is a planning estimate based
+on bounded review inputs and prior usage, not a guaranteed token/spend cap or a
+measured bill. Preserve actual token telemetry; extraction, embedding and
+Hermes model costs remain excluded. Success qualifies this private candidate
+and these functional scenarios only, not production or general memory efficacy.
