@@ -42,9 +42,27 @@ with a fresh codename, so earlier runs in the same org do not answer for it.
 - **Token overhead**: injected characters per probe (÷ 4 as a token estimate).
 - **Capture durability**: turns synced versus transcript rows the server
   accepted; batches left pending, parked or dropped.
-- **Extraction**: jobs created, how each ended, and seconds until the last
-  one finished.
+- **Extraction**: jobs created, how each ended, and final gate verification duration
+  (earlier input barriers are excluded; this is not total extraction latency).
 
 Not measured: whether a model uses the context well (that needs an agent in
 the loop), and dollars (the client cannot see the server's model spend;
 ingested characters and job counts are the proxy).
+
+## Completion and attribution gates
+
+The runner keeps input providers alive until transcript delivery, every extraction
+job and native-memory mirrors settle. `--wait` bounds the shared input-completion
+budget. A missing receipt, failed extraction or incomplete mirror invalidates all
+probes; it cannot become a passing deletion/unrelated result. Remember/delete
+acknowledgements are retained in the JSON report, including matching node IDs.
+A failed or timed-out probe also fails even when its fallback text is empty.
+Topic expectations must occur in recalled items attributable to the run; an
+unrelated automatic work brief cannot supply an expected answer. Interrupted
+work uses its created task UID as the provider's explicit resume target.
+
+Live profiles are retained by default. Use `--home /path/to/new/profile` to select
+where; existing paths are refused to prevent accidental reuse. Keep these
+profiles and raw reports private: a shared graph can return existing user data.
+See [the qualification protocol](LIVE-ACCEPTANCE.md) for candidate identity,
+confirmation runs, budgets and the limits of the resulting acceptance claim.

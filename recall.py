@@ -8,8 +8,8 @@ thing, and the same items repeated message after message. Each has a rule here.
 - **Query.** ``/retrieve/context`` OR-joins every query token into its keyword
   leg, so a sentence is reduced to its content terms. A message with too few of
   its own ("why?", "what did we decide?") borrows the previous message's.
-- **Floor.** An item is injected only when it mentions two distinct query terms
-  (one, when the query has one). The server always returns its best matches;
+- **Floor.** An item is injected only when it mentions at least half of the usable
+  query terms and at least two distinct terms (one for a one-term query). The server always returns its best matches;
   the best match for an unrelated message is still unrelated. For a borrowed
   query, one of the message's own terms is enough, so "what about Postgres?"
   finds Postgres and is not outvoted by the topic it moved on from.
@@ -33,7 +33,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from .render import node_display_type, status_tag
+from .render import node_display_type, status_tag, superseded_by
 
 logger = logging.getLogger(__name__)
 
@@ -315,9 +315,11 @@ def relevant(query: RecallQuery, text: str) -> bool:
             return True
         lent = tuple(term for term in query.terms if term not in query.own)
         matched, usable = term_overlap(lent, text)
-        return usable > 0 and matched >= min(2, usable)
+        return usable > 0 and matched >= max(min(2, usable), (usable + 1) // 2)
     matched, usable = term_overlap(query.terms, text)
-    return usable > 0 and matched >= min(2, usable)
+    # Two generic overlaps in a longer question ("child", "center") must not
+    # admit a child-study center for a CSS flexbox question.
+    return usable > 0 and matched >= max(min(2, usable), (usable + 1) // 2)
 
 
 # ── Rendering ──────────────────────────────────────────────────────────────
@@ -329,6 +331,10 @@ class Item:
     line: str
     # uid plus status: a decision that has since been superseded is news.
     identity: str
+    # Exactly the displayed assertion, separate from status/provenance text.
+    assertion: str = ""
+    source_title: str = ""
+    retired: bool = False
 
 
 def _text(value: Any) -> Optional[str]:
@@ -345,8 +351,8 @@ def _stated(node: dict[str, Any]) -> Optional[str]:
     stated = node.get("stated_at")
     if isinstance(stated, list):
         dates = [d for d in stated if isinstance(d, str) and d]
-        return max(dates)[:10] if dates else None
-    return stated[:10] if isinstance(stated, str) and stated else None
+        return _one_line(max(dates), 32) if dates else None
+    return _one_line(stated, 32) if isinstance(stated, str) and stated else None
 
 
 def select_items(response: Any, query: RecallQuery, *, floor: bool = True) -> list[Item]:
@@ -377,9 +383,12 @@ def select_items(response: Any, query: RecallQuery, *, floor: bool = True) -> li
         if floor and not relevant(query, subject):
             continue
         status = status_tag(node)
-        line = f"- [{kind}] {_one_line(label, LABEL_MAX)}{status}"
+        assertion = _one_line(label, LABEL_MAX)
+        line = f"- [{kind}] {assertion}{status}"
         if informative:
-            line += f" — {_one_line(informative, SUMMARY_MAX)}"
+            detail = f" — {_one_line(informative, SUMMARY_MAX)}"
+            assertion += detail
+            line += detail
         docs = node.get("source_documents") if isinstance(node.get("source_documents"), list) else []
         source = _text(docs[0].get("title")) if docs and isinstance(docs[0], dict) else None
         provenance = "; ".join(
@@ -392,7 +401,11 @@ def select_items(response: Any, query: RecallQuery, *, floor: bool = True) -> li
         )
         if provenance:
             line += f" ({provenance})"
-        items.append(Item(uid=uid, line=line, identity=f"{uid}{status}"))
+        truth = _text(node.get("truth_status")) or _text(props.get("truth_status"))
+        retired = (superseded_by(node) is not None or truth in ("refuted", "retracted")
+                   or node.get("currently_valid") is False)
+        items.append(Item(uid=uid, line=line, identity=f"{uid}{status}", assertion=assertion,
+                          source_title=_one_line(source, SOURCE_MAX) if source else "", retired=retired))
         if _on_own_subject(query, subject):
             leading.add(uid)
     # "What about Postgres?" after a Redis discussion: Postgres first.
@@ -417,6 +430,9 @@ class Recalled:
     count: int = 0
     # live | cached | stale (kept recall used past the deadline) | none
     source: str = "none"
+    # Separate successful empty recall from a failed/late request.
+    outcome: str = "not_requested"
+    items: tuple[Item, ...] = ()
 
 
 @dataclass
@@ -470,7 +486,7 @@ class RecallEngine:
         waits past the deadline. ``previous`` is Hermes's record of the
         person's last message; this process's own record is the fallback."""
         if not self.config.enabled:
-            return Recalled()
+            return Recalled(outcome="disabled")
         with self._lock:
             conversation = self._conversation(session)
             query = build_query(message, previous or conversation.last_message)
@@ -480,7 +496,7 @@ class RecallEngine:
             seq = self._seq
             candidates = self._candidates(conversation)
         if query is None:
-            return Recalled()
+            return Recalled(outcome="no_query")
         now = self._clock()
         if kept is not None and kept.key == query.key and now - kept.at <= CACHE_TTL_S:
             cached = self._inject(session, query, kept.response, "cached")
@@ -506,13 +522,13 @@ class RecallEngine:
         if done.wait(self.config.deadline_s):
             if "error" in box:
                 logger.debug("MindGraph recall failed: %s", box["error"])
-                return self._fallback(session, query, kept)
+                return self._fallback(session, query, kept, "error")
             return self._inject(session, query, box["response"], "live")
         logger.info(
             "MindGraph recall passed its %.1fs deadline; the turn proceeds and the answer is kept for the next message",
             self.config.deadline_s,
         )
-        return self._fallback(session, query, kept)
+        return self._fallback(session, query, kept, "timeout")
 
     def _keep(self, session: str, query: RecallQuery, response: Any, seq: int) -> None:
         with self._lock:
@@ -526,14 +542,16 @@ class RecallEngine:
         with self._lock:
             self._conversation(session).retry = query
 
-    def _fallback(self, session: str, query: RecallQuery, kept: Optional[_Kept]) -> Recalled:
+    def _fallback(self, session: str, query: RecallQuery, kept: Optional[_Kept], outcome: str) -> Recalled:
         """The conversation's last recall, when it is recent and shares a term
         with this message. The floor then decides item by item."""
         if kept is None or self._clock() - kept.at > CACHE_TTL_S or not query.terms:
-            return Recalled()
+            return Recalled(outcome=outcome)
         if not set(query.terms) & set(kept.terms):
-            return Recalled()
-        return self._inject(session, query, kept.response, "stale")
+            return Recalled(outcome=outcome)
+        result = self._inject(session, query, kept.response, "stale")
+        result.outcome = outcome
+        return result
 
     def _inject(self, session: str, query: RecallQuery, response: Any, source: str) -> Recalled:
         items = select_items(response, query, floor=self.config.floor)
@@ -543,7 +561,8 @@ class RecallEngine:
             text = render_items(fresh, self.config.max_chars)
             shown = [item for item in fresh if item.line in text]
             conversation.injected.update(item.identity for item in shown)
-        return Recalled(text=text, count=len(shown), source=source if shown else "none")
+        return Recalled(text=text, count=len(shown), source=source if shown else "none", outcome="success",
+                        items=tuple(shown))
 
     def after_turn(self, session: str) -> Optional[threading.Thread]:
         """Once a turn completes: retry a recall that failed, so the next

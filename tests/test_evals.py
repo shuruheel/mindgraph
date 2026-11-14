@@ -4,6 +4,8 @@ The offline run uses a scripted server, so it measures the harness, not memory."
 
 from __future__ import annotations
 
+from dataclasses import asdict
+
 import pytest
 
 from evals.offline import oracle
@@ -35,6 +37,55 @@ def test_forbidden_text_fails_wherever_it_appears():
     scenario = BY_NAME["deletion"]
     assert score(scenario, "", CODE).passed
     assert not score(scenario, f"- [Observation] The {CODE} door code is 4417-ELM [SUPERSEDED]", CODE).passed
+
+
+def test_metadata_cannot_turn_an_unresolved_old_assertion_into_a_correction():
+    scenario = BY_NAME["corrected_fact"]
+    old = f"- [Claim] {CODE} pilot budget is $8,000"
+    for suffix in (
+        f" [LATER STATEMENT: {CODE} pilot budget is $12,500 (2026-11-14)]",
+        " (source: budget $12,500)",
+    ):
+        result = score(scenario, old + suffix, CODE)
+        assert not result.passed
+        assert any("stale shown as current" in failure for failure in result.failures)
+        assert any("missing" in failure for failure in result.failures)
+
+
+@pytest.mark.parametrize("extra", [
+    {"source_documents": [{"title": "SUPERSEDED budget notes"}]},
+    {"later_statements": [{"label": "SUPERSEDED project note: budget $12,500"}]},
+    {"summary": "The [budget is $8,000]."},
+])
+def test_live_scoring_uses_structured_status_and_preserves_bracketed_assertions(extra):
+    from hermes_mindgraph_plugin.recall import RecallQuery, render_items, select_items
+
+    old = {"uid": "old", "node_type": "Claim", "label": f"{CODE} pilot budget is $8,000", **extra}
+    new = {"uid": "new", "node_type": "Claim", "label": f"{CODE} pilot budget is $12,500"}
+    items = select_items({"graph": {"nodes": [old, new]}}, RecallQuery("budget", ("budget",)), floor=False)
+    result = score(BY_NAME["corrected_fact"], render_items(items, 4000), CODE, [asdict(i) for i in items])
+    assert not result.passed
+    assert any("stale shown as current" in failure for failure in result.failures)
+    old["truth_status"] = "refuted"
+    items = select_items({"graph": {"nodes": [old, new]}}, RecallQuery("budget", ("budget",)), floor=False)
+    assert score(BY_NAME["corrected_fact"], render_items(items, 4000), CODE, [asdict(i) for i in items]).passed
+
+
+def test_text_fixtures_do_not_hide_brackets_or_take_retirement_from_metadata():
+    scenario = BY_NAME["preference_change"]
+    current = f"- [Preference] {CODE} status reports use five-bullet summaries"
+    for old in (
+        f"- [Preference] {CODE} uses [long-form prose]",
+        f"- [Preference] {CODE} uses long-form prose [LATER STATEMENT: SUPERSEDED project note]",
+        f"- [Preference] {CODE} uses long-form prose (source: SUPERSEDED notes)",
+    ):
+        assert not score(scenario, f"{old}\n{current}", CODE).passed
+
+
+def test_missing_structured_items_cannot_qualify_a_live_result():
+    result = score(BY_NAME["corrected_fact"], f"- [Claim] {CODE} budget $12,500", CODE, [])
+    assert not result.passed
+    assert "structured recall evidence" in result.failures[0]
 
 
 def test_an_unrelated_message_tolerates_the_brief_but_no_recalled_item():
@@ -72,3 +123,65 @@ def test_a_poor_memory_fails_the_scenarios_it_should(eval_env):
         report = run_suite(base_url=server.url, api_key="mg_offline", home=eval_env, wait_s=10.0)
     failed = {outcome["scenario"] for outcome in report["outcomes"] if not outcome["passed"]}
     assert failed == {"preference_change", "corrected_fact", "interrupted_work", "unrelated_project", "deletion"}
+
+
+def test_unfinished_extraction_blocks_all_scoring(eval_env):
+    with oracle() as server:
+        route = server._route
+
+        def pending(method, path, body):
+            if path.startswith('/jobs/'):
+                return 200, {'id': path.rsplit('/', 1)[-1], 'status': 'processing'}
+            return route(method, path, body)
+
+        server._route = pending
+        report = run_suite(base_url=server.url, api_key='mg_offline', home=eval_env, wait_s=0.1)
+    assert not report['input_ready']
+    assert report['passed'] == 0
+    assert all(o['failures'] == ['not measured: input prerequisites failed'] for o in report['outcomes'])
+
+
+def test_delete_requires_a_real_matching_acknowledgement(eval_env):
+    with oracle() as server:
+        route = server._route
+
+        def no_ack(method, path, body):
+            if path == '/memory/forget':
+                return 200, {'uid': 'different-entry', 'action': 'forgotten'}
+            return route(method, path, body)
+
+        server._route = no_ack
+        report = run_suite(base_url=server.url, api_key='mg_offline', home=eval_env, wait_s=2, only='deletion')
+    assert not report['input_ready'] and report['passed'] == 0
+    assert any('matching delete receipt' in p for p in report['problems'])
+
+
+def test_expected_phrases_in_an_unrelated_resume_brief_do_not_pass_topic_recall():
+    assert not score(BY_NAME['cross_session_decision'], '# Resume context\nRedis cache expiry review', CODE).passed
+    assert not score(BY_NAME['corrected_fact'], '- [Claim] Other project budget $12,500', CODE).passed
+
+
+def test_empty_recall_after_a_server_error_does_not_pass_deletion(eval_env):
+    with oracle() as server:
+        route = server._route
+
+        def broken(method, path, body):
+            if path == '/retrieve/context':
+                return 500, {'error': 'corrupted index'}
+            return route(method, path, body)
+
+        server._route = broken
+        report = run_suite(base_url=server.url, api_key='mg_offline', home=eval_env, wait_s=3, only='deletion')
+    assert report['input_ready']
+    assert report['passed'] == 0
+    assert report['outcomes'][0]['retrieval_outcome'] == 'error'
+
+
+def test_empty_recall_after_a_deadline_does_not_pass_deletion(eval_env, monkeypatch):
+    monkeypatch.setenv('MINDGRAPH_RECALL_DEADLINE_MS', '250')
+    with oracle() as server:
+        server.delays['/retrieve/context'] = 0.5
+        report = run_suite(base_url=server.url, api_key='mg_offline', home=eval_env, wait_s=3, only='deletion')
+    assert report['input_ready']
+    assert report['passed'] == 0
+    assert report['outcomes'][0]['retrieval_outcome'] == 'timeout'

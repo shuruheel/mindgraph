@@ -28,6 +28,7 @@ from __future__ import annotations
 import contextvars
 import hashlib
 import inspect
+import json
 import logging
 import os
 import sqlite3
@@ -283,6 +284,7 @@ class MindGraphMemoryProvider(MemoryProvider):
             load_config(get_secret, hermes_home=kwargs.get("hermes_home"), cwd=kwargs.get("cwd")),
             spawn_context_thread,
         )
+        self._resume_task_uid = str(kwargs.get("task_uid") or get_secret("MINDGRAPH_RESUME_TASK_UID", "") or "")
         # mindgraph_memory status must describe what this provider actually does.
         self._memory_config = MemoryRuntimeConfig(
             server_version=__version__,
@@ -367,7 +369,9 @@ class MindGraphMemoryProvider(MemoryProvider):
             "chunk_limit": 0,
             "article_limit": 0,
             "include_graph": True,
-            "graph_expansion_limit": 3,
+            # Automatic recall is on the first-token path. Direct matches avoid
+            # a whole-graph expansion; explicit retrieval tools can still expand.
+            "graph_expansion_limit": 0,
             "graph_max_depth": 2,
             "rerank": config.rerank,
         }
@@ -387,7 +391,12 @@ class MindGraphMemoryProvider(MemoryProvider):
 
         def run() -> None:
             try:
-                brief = rt.client.plan(action="resume_work", agent_id=rt.agent_id, limit=1)
+                scope = {}
+                if self._resume_task_uid:
+                    scope["task_uid"] = self._resume_task_uid
+                elif self._recall.config.project_uid:
+                    scope["scope_uids"] = [self._recall.config.project_uid]
+                brief = rt.client.plan(action="resume_work", agent_id=rt.agent_id, limit=1, **scope)
                 found = isinstance(brief, dict) and brief.get("task")
                 entry["text"] = (render_resume_context(brief) or "") if found else ""
             except Exception as exc:
@@ -564,6 +573,23 @@ class MindGraphMemoryProvider(MemoryProvider):
         extra = (
             {"idempotency_key": f"hermes:{batch.batch_id}"} if _takes_idempotency_key(rt.client.ingest_session) else {}
         )
+        if batch.captured_at:
+            extra.update(
+                context=json.dumps({
+                    "schema": "memory-capture/v1",
+                    "actor_scope": batch.actor_scope,
+                    "turn_framing": batch.turn_framing,
+                    "captured_at": batch.captured_at,
+                    "time_basis": "live_turns" if batch.occurred_at else "checkpoint_observation",
+                    "note": (
+                        "Capture time is not the time of the events discussed. Turns are in conversation order. "
+                        "If no document date is supplied, recovered turns' original timestamps are unavailable. "
+                        "The actor scope identifies a Hermes profile, not an authenticated transport speaker."
+                    ),
+                }),
+            )
+        if batch.occurred_at:
+            extra["occurred_at"] = batch.occurred_at
         try:
             response = rt.client.ingest_session(
                 batch.content, title=batch_title(batch), session_uid=session_uid, agent_id=rt.agent_id, **extra
