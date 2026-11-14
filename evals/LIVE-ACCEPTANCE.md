@@ -113,3 +113,45 @@ effective recall deadline, item limit, character budget and relevance floor,
 plus candidate/host/input hashes, backend identity and model identity. Manifests
 are saved before scoring; inherited environment overrides cannot silently alter
 the frozen defaults.
+
+
+## Source-backed backend development amendment (2026-11-14)
+
+The original d2b302 result remains 4/6. Continue with the same six scenarios,
+scorer, recall defaults and remaining budget (two development suites, two
+confirmation suites, four agent invocations). Do not reset counters or rescore
+old reports. This development uses the reviewed opt-in backend candidate on a
+private Fly machine with an isolated copy of the repaired benchmark graph,
+8 GB RAM, authenticated benchmark identity and all Cloud background workers
+disabled with `MINDGRAPH_RELEASE_SMOKE_MODE=true`. No public service or production
+graph writes are part of this backend experiment. Record the clone's source,
+base-row count/hash and candidate/config/image hashes before the first run.
+
+Require immutable plugin, Cloud, core and Mnestic SHAs, image digest, host/model
+identity and effective settings in each run manifest. Verify the clone's exact
+text/semantic lookups and credential-free gates before model work. Pin extraction
+models to the recorded production configuration; enable transcript review only
+for the authenticated test uploader plus fresh profile namespace. Record chunk
+review coverage, unsupported-source skips, model requests/usage and certificate
+counts alongside the unchanged delivery and extraction gates. Unsupported
+review does not itself establish reconciliation; stale assertions still fail.
+
+The additional review stage permits one call per supported chunk, 64 candidates,
+24,000 source characters, 64,000 evidence characters and 4,096 output tokens.
+No automatic re-review or extra probe may bypass the suite/agent limits. Across
+remaining authorized runs, allow at most 28 additional review calls (24 suite
+jobs plus at most four agent captures). Stop if this cap or the existing job/call
+budget is exhausted. GPT-5.4 Nano via OpenRouter is the recorded curation model.
+On 2026-11-14 its provider page lists $0.20/$1.25 per million input/output tokens
+($0.22/$1.375 for the higher-priced listed route). A conservative planning
+allowance of 300,000 input plus 4,096 output tokens per call gives about $2.01
+for 28 calls at that higher rate; reserve $3 for this added stage. This is an
+estimate, not an observed bill or a tokenizer guarantee; preserve reported
+usage and do not claim exact total experiment spending. Pricing source:
+https://openrouter.ai/openai/gpt-5.4-nano
+
+Passing this private-backend experiment establishes functional acceptance only
+for its recorded artifacts and deployment. It does not establish production
+latency under concurrent traffic or enable the feature for unrelated users.
+Production delivery requires its own concrete artifact/config preflight.
+Independent protocol review is required before these additional paid calls.
