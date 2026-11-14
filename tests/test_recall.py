@@ -610,3 +610,16 @@ def test_an_undo_lets_the_same_question_recall_again(secrets, tmp_path):
     assert provider.prefetch("What is the Voya pilot budget?", session_id="hermes-sess")
     provider.on_session_switch("hermes-sess", rewound=True)
     assert "Voya pilot budget is $8,000" in provider.prefetch("What is the Voya pilot budget?", session_id="hermes-sess")
+
+
+def test_two_generic_words_do_not_admit_an_off_topic_result_for_a_long_query():
+    query = build_query('How do I vertically center a flexbox child in CSS?')
+    assert not relevant(query, 'Research center focusing on child development')
+    assert relevant(query, 'Vertically center a CSS flexbox child with align-items')
+
+
+def test_explicit_resume_task_and_workspace_scope_reach_the_backend(secrets, tmp_path):
+    secrets.update(MINDGRAPH_RESUME_TASK_UID='active-task')
+    provider, fake = start(tmp_path)
+    provider.prefetch('Continue active project work', session_id='s')
+    assert fake.called('plan')[0][1]['task_uid'] == 'active-task'

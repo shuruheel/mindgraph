@@ -315,9 +315,11 @@ def relevant(query: RecallQuery, text: str) -> bool:
             return True
         lent = tuple(term for term in query.terms if term not in query.own)
         matched, usable = term_overlap(lent, text)
-        return usable > 0 and matched >= min(2, usable)
+        return usable > 0 and matched >= max(min(2, usable), (usable + 1) // 2)
     matched, usable = term_overlap(query.terms, text)
-    return usable > 0 and matched >= min(2, usable)
+    # Two generic overlaps in a longer question ("child", "center") must not
+    # admit a child-study center for a CSS flexbox question.
+    return usable > 0 and matched >= max(min(2, usable), (usable + 1) // 2)
 
 
 # ── Rendering ──────────────────────────────────────────────────────────────
@@ -417,6 +419,8 @@ class Recalled:
     count: int = 0
     # live | cached | stale (kept recall used past the deadline) | none
     source: str = "none"
+    # Separate successful empty recall from a failed/late request.
+    outcome: str = "not_requested"
 
 
 @dataclass
@@ -470,7 +474,7 @@ class RecallEngine:
         waits past the deadline. ``previous`` is Hermes's record of the
         person's last message; this process's own record is the fallback."""
         if not self.config.enabled:
-            return Recalled()
+            return Recalled(outcome="disabled")
         with self._lock:
             conversation = self._conversation(session)
             query = build_query(message, previous or conversation.last_message)
@@ -480,7 +484,7 @@ class RecallEngine:
             seq = self._seq
             candidates = self._candidates(conversation)
         if query is None:
-            return Recalled()
+            return Recalled(outcome="no_query")
         now = self._clock()
         if kept is not None and kept.key == query.key and now - kept.at <= CACHE_TTL_S:
             cached = self._inject(session, query, kept.response, "cached")
@@ -506,13 +510,13 @@ class RecallEngine:
         if done.wait(self.config.deadline_s):
             if "error" in box:
                 logger.debug("MindGraph recall failed: %s", box["error"])
-                return self._fallback(session, query, kept)
+                return self._fallback(session, query, kept, "error")
             return self._inject(session, query, box["response"], "live")
         logger.info(
             "MindGraph recall passed its %.1fs deadline; the turn proceeds and the answer is kept for the next message",
             self.config.deadline_s,
         )
-        return self._fallback(session, query, kept)
+        return self._fallback(session, query, kept, "timeout")
 
     def _keep(self, session: str, query: RecallQuery, response: Any, seq: int) -> None:
         with self._lock:
@@ -526,14 +530,16 @@ class RecallEngine:
         with self._lock:
             self._conversation(session).retry = query
 
-    def _fallback(self, session: str, query: RecallQuery, kept: Optional[_Kept]) -> Recalled:
+    def _fallback(self, session: str, query: RecallQuery, kept: Optional[_Kept], outcome: str) -> Recalled:
         """The conversation's last recall, when it is recent and shares a term
         with this message. The floor then decides item by item."""
         if kept is None or self._clock() - kept.at > CACHE_TTL_S or not query.terms:
-            return Recalled()
+            return Recalled(outcome=outcome)
         if not set(query.terms) & set(kept.terms):
-            return Recalled()
-        return self._inject(session, query, kept.response, "stale")
+            return Recalled(outcome=outcome)
+        result = self._inject(session, query, kept.response, "stale")
+        result.outcome = outcome
+        return result
 
     def _inject(self, session: str, query: RecallQuery, response: Any, source: str) -> Recalled:
         items = select_items(response, query, floor=self.config.floor)
@@ -543,7 +549,7 @@ class RecallEngine:
             text = render_items(fresh, self.config.max_chars)
             shown = [item for item in fresh if item.line in text]
             conversation.injected.update(item.identity for item in shown)
-        return Recalled(text=text, count=len(shown), source=source if shown else "none")
+        return Recalled(text=text, count=len(shown), source=source if shown else "none", outcome="success")
 
     def after_turn(self, session: str) -> Optional[threading.Thread]:
         """Once a turn completes: retry a recall that failed, so the next

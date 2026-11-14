@@ -159,3 +159,10 @@ For a persistent remote Hermes environment, see [the private Fly test lab](deplo
 ## License
 
 MIT
+
+For live qualification, follow [the acceptance gates](evals/LIVE-ACCEPTANCE.md).
+`MINDGRAPH_RESUME_TASK_UID` selects an explicit active task for the automatic
+open-work brief. Otherwise a configured workspace/project bounds that brief;
+without either setting the backend selects from eligible open work. Automatic
+recall uses direct matches within its existing three-second deadline; explicit
+retrieval tools keep their graph-expansion options.
