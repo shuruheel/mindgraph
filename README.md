@@ -56,7 +56,7 @@ Recall runs before every model call, so it is built around three things a person
 - **Deadline.** The live call gets `MINDGRAPH_RECALL_DEADLINE_MS`. Past it the turn proceeds, using the conversation's last recall when that is on topic, and the late answer is kept for the next message.
 - **No repeats.** An item already injected in the conversation is not injected again until compression drops it or its status changes.
 
-Each item is one line: type, label, status (`SUPERSEDED by …`, a non-accepted truth status, outside its validity window), summary, the date it was stated and its source.
+Each item is one line: type, label, status (`SUPERSEDED by …`, a non-accepted truth status, outside its validity window), summary, the timestamp it was stated and its source. Server-provided later-statement references are shown as references; they do not by themselves establish that an earlier fact was superseded.
 
 The floor is lexical, so a question in one language will not match memory written in another; set `MINDGRAPH_RECALL_FLOOR=off` for cross-language use.
 
@@ -81,6 +81,8 @@ A completed turn is written to `$HERMES_HOME/mindgraph/capture.db` (SQLite, mode
 - `/undo` removes every queued, undelivered turn of that conversation. A session generation carried through Hermes's background-call context rejects a delayed pre-undo turn, while a new turn is accepted immediately, even with identical text. Hermes does not say how far an undo went, so all queued turns of that session are discarded; the count is in status. Requests already sent cannot be recalled.
 
 Delivery runs on a thread of the provider's own. `sync_turn` never waits for it, and the boundary hooks wait a few seconds at most, so a slow server delays capture and not Hermes.
+
+Batches retain their original capture time across delayed delivery and retries. Live-turn batches supply that observation as the conversation date; recovered checkpoint text and mixed batches keep their original statement date unknown. The ingestion context carries `memory-capture/v1` metadata with capture time and a stable profile namespace. This namespace identifies the profile, not an authenticated participant; servers must establish speaker identity separately before using it for cross-session revisions.
 
 Up to 20 million characters of undelivered text and author metadata are held. A write that would exceed that capacity is rejected atomically and counted; previously accepted evidence is never evicted. A required checkpoint raises so Hermes retains the uncompressed transcript. Once delivery frees capacity the checkpoint can be retried. `mindgraph_memory` with `action: "status"` reports capacity rejections, queue state, undo discards, delivery receipts, and extraction failures. Historical drops from 1.1.0 remain visible. The database migrates in place. The upgrade rebuilds v1 deduplication ledgers from retained queue text because copied records cannot prove that evidence survived an undo or eviction. This can replay already-delivered rows at the first required checkpoint after upgrading.
 

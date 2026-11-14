@@ -28,6 +28,7 @@ from __future__ import annotations
 import contextvars
 import hashlib
 import inspect
+import json
 import logging
 import os
 import sqlite3
@@ -572,6 +573,22 @@ class MindGraphMemoryProvider(MemoryProvider):
         extra = (
             {"idempotency_key": f"hermes:{batch.batch_id}"} if _takes_idempotency_key(rt.client.ingest_session) else {}
         )
+        if batch.captured_at:
+            extra.update(
+                context=json.dumps({
+                    "schema": "memory-capture/v1",
+                    "actor_scope": batch.actor_scope,
+                    "captured_at": batch.captured_at,
+                    "time_basis": "live_turns" if batch.occurred_at else "checkpoint_observation",
+                    "note": (
+                        "Capture time is not the time of the events discussed. Turns are in conversation order. "
+                        "If no document date is supplied, recovered turns' original timestamps are unavailable. "
+                        "The actor scope identifies a Hermes profile, not an authenticated transport speaker."
+                    ),
+                }),
+            )
+        if batch.occurred_at:
+            extra["occurred_at"] = batch.occurred_at
         try:
             response = rt.client.ingest_session(
                 batch.content, title=batch_title(batch), session_uid=session_uid, agent_id=rt.agent_id, **extra

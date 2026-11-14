@@ -1,5 +1,28 @@
 # Live acceptance qualification
 
+## Amendment after development run d2b302
+
+The original `d2b302` report remains 4/6 and is not rescored. Before any further
+paid runs, the next development phase tightens the scorer: expected and stale
+phrases are evaluated in the renderer's structured displayed assertion, with
+retirement taken from structured server status. Annotations and source titles
+cannot supply either. Arbitrary brackets in assertion text are preserved.
+Raw rendered text remains the input for forbidden-text checks. A `LATER
+STATEMENT` cross-reference alone neither retires an
+old assertion nor establishes the replacement answer. Existing positive
+correction sentences and authoritative retirement markers remain supported.
+
+This fixes a reproduced false-pass path introduced by rendering the server's
+restatement cue. Scenario text, required facts, negative checks, recall defaults
+and confirmation gates are unchanged. The overall budget is **not reset**:
+one suite/six jobs/14 rows has been consumed; at most two further development
+suites and two confirmation suites remain, plus the original four-agent-call
+allowance. Backend revision review is not qualified by this amendment: its
+contract, opt-in configuration, resource budget and immutable source must be
+reviewed and recorded before testing it live.
+
+## Original protocol
+
 This protocol follows the failed `e7c348` run on 2026-11-14. That run and its
 separate recovery diagnostics remain unchanged. It exposed an incomplete-input
 measurement, default-deadline misses, irrelevant recall and a reproducible

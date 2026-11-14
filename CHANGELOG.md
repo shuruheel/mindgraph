@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Preserve capture-time provenance across retries without assigning recovered checkpoint text a new statement date; include a persistent profile namespace in versioned ingestion metadata.
+- Preserve full recall timestamps and server-provided current/later-statement cues. Later statements remain distinct from authoritative supersession.
+- Keep structured displayed assertions and retirement status for acceptance evidence, preventing source titles and reference labels from supplying answers or retirement markers.
+- Require completed capture/extraction and matching searchable remember/delete receipts in live acceptance; retain failed runs and enforce successful retrieval for negative checks.
+- Scope interrupted-work recall to an explicit task or configured project and use direct automatic retrieval within the existing deadline. Tighten the relevance floor to require multiple matching terms when available.
+
 ## 1.2.0 (2026-11-13)
 
 - Required checkpoints reject queue overflow atomically instead of evicting accepted evidence. Migrates the capture schema and repairs stale deduplication records from previously dropped batches.

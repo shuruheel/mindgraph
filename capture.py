@@ -157,6 +157,12 @@ class Batch:
     attempts: int
     # An earlier attempt may have reached the server.
     uncertain: bool
+    # First retained part's capture time, never the later retry/delivery time.
+    # Checkpoint recovery can observe older turns for the first time here.
+    captured_at: Optional[str] = None
+    # Unknown for recovered checkpoint text, including mixed batches.
+    occurred_at: Optional[str] = None
+    actor_scope: Optional[str] = None
 
     @property
     def tag(self) -> str:
@@ -229,6 +235,12 @@ class CaptureQueue:
         self._tx(self._migrate)
 
     def _migrate(self) -> None:
+        # A profile namespace, not a claim that every transport speaker is one
+        # person. Servers must still require an explicit single-user policy or
+        # authenticated speaker bindings before using it for revisions.
+        self._db.execute(
+            "INSERT OR IGNORE INTO meta (key, value) VALUES ('actor_scope', ?)", (str(uuid.uuid4()),)
+        )
         columns = {row[1] for row in self._db.execute("PRAGMA table_info(parts)")}
         if "author" not in columns:
             self._db.execute("ALTER TABLE parts ADD COLUMN author TEXT")
@@ -586,7 +598,7 @@ class CaptureQueue:
                 if not force and row[7] > now:
                     return None
                 parts = self._db.execute(
-                    "SELECT role, text, author FROM parts WHERE batch_id = ? ORDER BY id", (row[0],)
+                    "SELECT role, text, author, created_at, origin FROM parts WHERE batch_id = ? ORDER BY id", (row[0],)
                 ).fetchall()
                 if not parts:
                     # Its text is gone (another process delivered it): nothing to send.
@@ -600,7 +612,12 @@ class CaptureQueue:
                     "UPDATE batches SET lease_owner = ?, lease_until = ?, uncertain = 1 WHERE batch_id = ?",
                     (self._owner, now + LEASE_S, row[0]),
                 )
-                return Batch(row[0], row[1], row[2], row[3], render_parts(parts), row[4], row[5], bool(row[6]))
+                return Batch(
+                    row[0], row[1], row[2], row[3], render_parts(parts), row[4], row[5], bool(row[6]),
+                    _iso(parts[0][3]),
+                    _iso(parts[0][3]) if all(part[4] == "turn" for part in parts) else None,
+                    self._db.execute("SELECT value FROM meta WHERE key = 'actor_scope'").fetchone()[0],
+                )
 
         return self._tx(work)
 

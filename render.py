@@ -206,6 +206,22 @@ def status_tag(node: Rec) -> str:
         tags.append("OUTSIDE ITS VALIDITY WINDOW")
     if node.get("valid_at_time") is False:
         tags.append("NOT VALID AT THE REQUESTED TIME")
+    if node.get("current") is True:
+        tags.append("CURRENT")
+    elif node.get("latest_on_subject") is True:
+        tags.append("LATEST ON THIS SUBJECT")
+    # A restatement is evidence of a later value, not a supersession verdict.
+    # Preserve the server's distinction instead of silently losing the cue.
+    later = node.get("later_statements")
+    if isinstance(later, list):
+        for ref in later[:2]:
+            if not isinstance(ref, dict):
+                continue
+            label = _str(ref.get("label")) or _str(ref.get("uid"))
+            if label:
+                label = " ".join(label.split())[:120]
+                date = _str(ref.get("stated_at"))
+                tags.append(f"LATER STATEMENT: {label}" + (f" ({date[:32]})" if date else ""))
     return f" [{'; '.join(tags)}]" if tags else ""
 
 

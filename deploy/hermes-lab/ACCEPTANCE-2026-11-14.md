@@ -44,26 +44,71 @@ failure is retained. The successful rehearsal used two performance CPUs and
   allowance, tenant initialization took 307.45 seconds and the first text query
   a further 12.13 seconds. This does not change the plugin recall deadline.
 
-Production has not been repaired. The prepared procedure pauses incoming service
-traffic, takes a live backup, rebuilds only the affected derived index with
-8GB RAM, verifies base hashes, and restores the exact original server image and
-configuration before resuming traffic. It never promotes a snapshot clone.
-The estimated shared API interruption is 15–20 minutes. There is no global
-active-job endpoint, and unfinished jobs may be cancelled without automatic
-replay. Explicit maintenance approval was requested; test-write authorization
-alone was not treated as permission for that interruption.
+Production repair completed after explicit owner approval. Traffic was paused
+from 16:08:31 to 16:26:34 UTC (18m03s). The live database was backed up and only
+the affected derived index rebuilt; no snapshot clone replaced live data.
 
-The latest authorized-tenant job inventory contained 18 terminal jobs and no
-active jobs. This is not proof of quiescence across all tenants or schedulers.
+- 162,406 base rows; identical before/after SHA-256
+  `a7b73b4528cc35910939f37b0f7ad55d23a53445329ce6c65fb288cbd5f13f20`.
+- Backup: 5,642,469,376 bytes, SHA-256
+  `ed74a21d26c4b4583560733afae706399ff1e7089b3aa8b218df12b89c9f0e1a`;
+  full SQLite integrity check passed. Backup and receipts remain on the
+  production volume under `/data/maintenance/approved-20261114T1608Z/`.
+- Backup took 122.52s; index rebuild 132.98s. Previously failing raw query
+  returned 883 candidates.
+- Original server image restored. Fly CLI retained an entrypoint override;
+  configuration comparison caught it, and an exact Machines API update removed
+  it before traffic resumed.
+- The original 4GB allocation repeatedly OOM-killed cold startup. Restoring
+  service required **8GB**; configuration otherwise matches the original.
+  Observed cold peak RSS was about 4.88GB, settling near 1.9GB. Do not revert
+  the memory allocation without a verified startup fix.
+- Public verification: healthy/ready, text retrieval HTTP 200 (10 results,
+  1.205s), direct context 2.021s, expanded context 2.805s; corrected budget
+  present. These diagnostics are separate from acceptance scores.
+
+The pre-maintenance authorized-tenant inventory contained 18 terminal jobs and
+no active jobs; shutdown reported `Drained`. This is not proof of quiescence
+across all tenants or schedulers.
 Private raw reports, graph-derived data and operational configuration remain
 outside this repository under `/tmp/hermes-acceptance-fix` and the isolated
-repair volume. Temporary repair machines are stopped while approval is pending.
+repair volume. Temporary repair machines are stopped; the persistent lab remains.
 
 ## Remaining gates
 
-No development or confirmation suite has been run in this new phase yet.
-After backend repair, follow [the frozen protocol](../../evals/LIVE-ACCEPTANCE.md):
-one labelled development suite, two fresh 6/6 confirmations with complete input
-and retrieval gates, then the actual-Hermes capture/new-session recall pair.
+Development run `d2b302` on candidate `8dd05a9` passed **4/6**. All 14 transcript
+rows were delivered, all six extraction jobs completed, and every probe had a
+successful retrieval within three seconds (maximum 2.612s). Interrupted work,
+cross-session decision, unrelated query and deletion passed. Preference change
+and corrected fact failed because obsolete duplicates remained unmarked.
+The original report is retained at
+`/data/runs/20261114T162805Z-development-1-4ddxu0if/report.json` on the lab and
+in the private local evidence directory. A launcher import error before any
+API calls is retained separately and is not counted as an executed suite.
+
+Diagnosis found two plugin integration gaps: omitted capture timestamps on
+session ingestion and dropped `later_statements` cues on recall. Follow-up
+changes preserve stable capture time across retries, distinguish it from
+original event time, retain timestamp precision, and display the server's
+restatement cues without inventing supersession. Checkpoint and mixed captures
+omit original-turn timestamps. A persistent profile UUID namespaces captures;
+it does not authenticate speakers. Live scoring now uses the actual displayed
+assertions and structured retirement status, preventing source titles or
+later-statement references from supplying false evidence.
+
+Local validation: 486 unit tests and 33 real-Hermes host tests passed; Ruff
+passed. Independent contract and scorer/protocol reviews found no remaining
+blocking plugin defects. These changes have not had a live acceptance run.
+
+Independent diagnosis confirms that metadata alone cannot resolve the stale
+duplicates: backend write-time review covers Claims but the same obsolete fact
+also appears as Preference/Constraint/Concept. Source-backed revision
+reconciliation is needed; choosing the newest node or hiding stale phrases
+would conceal the defect. Backend implementation is not yet qualified.
+
+Continue under [the frozen protocol](../../evals/LIVE-ACCEPTANCE.md): at most two
+further development suites in this phase, then two fresh 6/6 confirmations on
+one immutable candidate, then the actual-Hermes capture/new-session recall pair.
+Consumed so far: one suite, six extraction jobs, 14 rows, zero agent model calls.
 Do not claim broader acceptance or publish these changes as qualified before
 those gates pass. The pending release remains distinct from released v1.2.0.

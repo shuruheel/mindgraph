@@ -207,6 +207,50 @@ def reopen(tmp_path, clock) -> CaptureQueue:
 # ── The queue ──────────────────────────────────────────────────────────────
 
 
+def test_capture_date_survives_delayed_sealing_restart_and_retry(tmp_path, clock, queue):
+    clock.now = 1_794_614_400.0  # 2026-11-14 00:00 UTC
+    queue.add_turn("s", "Remember this", "Noted")
+    clock.now += 86_400
+    queue.seal()
+    queue.close()
+    survivor = reopen(tmp_path, clock)
+    first = survivor.claim(force=True)
+    assert first.captured_at == "2026-11-14T00:00:00Z"
+    assert first.occurred_at == first.captured_at
+    assert first.actor_scope
+    survivor.mark_retry(first.batch_id, "temporary", uncertain=False)
+    clock.now += 86_400
+    retried = survivor.claim(force=True)
+    assert retried.captured_at == first.captured_at
+    assert retried.occurred_at == first.occurred_at
+    assert retried.actor_scope == first.actor_scope
+    assert retried.content == first.content
+    survivor.close()
+
+
+@pytest.mark.parametrize("mixed", [False, True])
+def test_recovered_text_never_acquires_a_statement_date(queue, mixed):
+    queue.add_evidence("s", [("user", "A much earlier statement")])
+    if mixed:
+        queue.add_turn("s", "A live new statement", "Noted")
+    queue.seal()
+    batch = queue.claim(force=True)
+    assert batch.captured_at
+    assert batch.occurred_at is None
+    assert batch.origin == ("turn" if mixed else "checkpoint")
+
+
+def test_checkpoint_delivery_keeps_capture_time_out_of_statement_metadata(secrets, home):
+    provider, fake = start(home)
+    provider.on_pre_compress([{"role": "user", "content": "An older fact"}], require_checkpoint=True)
+    (_, kwargs), = fake.called("ingest_session")
+    assert "occurred_at" not in kwargs
+    context = json.loads(kwargs["context"])
+    assert context["schema"] == "memory-capture/v1"
+    assert context["actor_scope"] and context["captured_at"]
+    assert context["time_basis"] == "checkpoint_observation"
+
+
 def test_a_committed_turn_survives_the_process(tmp_path, clock, queue):
     queue.add_turn("s1", "We chose Postgres.", "Noted.")
     queue.close()  # no seal, no delivery: the process just ends
@@ -797,8 +841,10 @@ def test_an_outage_delays_capture_and_recovery_delivers_it_in_order(secrets, hom
 class KeyedClient(FakeClient):
     """An SDK newer than 0.17.0: ``ingest_session`` has the idempotency argument."""
 
-    def ingest_session(self, content, *, title=None, session_uid=None, agent_id=None, idempotency_key=None):
-        kwargs = {"title": title, "session_uid": session_uid, "agent_id": agent_id, "idempotency_key": idempotency_key}
+    def ingest_session(self, content, *, title=None, session_uid=None, agent_id=None, idempotency_key=None,
+                       occurred_at=None, context=None):
+        kwargs = {"title": title, "session_uid": session_uid, "agent_id": agent_id, "idempotency_key": idempotency_key,
+                  "occurred_at": occurred_at, "context": context}
         self.calls.append(("ingest_session", (content,), kwargs))
         reply = self.responses.get("ingest_session", {})
         if isinstance(reply, BaseException):
@@ -818,6 +864,9 @@ def test_a_resend_carries_the_same_idempotency_key_and_accepts_the_replay(secret
     provider.on_session_end([])
     first, second = (kwargs["idempotency_key"] for _, kwargs in fake.called("ingest_session"))
     assert first == second and first.startswith("hermes:") and len(first) == len("hermes:") + 64
+    dates = [kwargs["occurred_at"] for _, kwargs in fake.called("ingest_session")]
+    assert dates[0] and dates[0] == dates[1]
+    assert "original timestamps are unavailable" in fake.called("ingest_session")[0][1]["context"]
     delivery = provider._capture.status()["last_delivery"]
     assert delivery["document_uid"] == "doc-1" and not delivery.get("job_id")
     assert provider._capture.status()["pending_batches"] == 0

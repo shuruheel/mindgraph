@@ -33,7 +33,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from .render import node_display_type, status_tag
+from .render import node_display_type, status_tag, superseded_by
 
 logger = logging.getLogger(__name__)
 
@@ -331,6 +331,10 @@ class Item:
     line: str
     # uid plus status: a decision that has since been superseded is news.
     identity: str
+    # Exactly the displayed assertion, separate from status/provenance text.
+    assertion: str = ""
+    source_title: str = ""
+    retired: bool = False
 
 
 def _text(value: Any) -> Optional[str]:
@@ -347,8 +351,8 @@ def _stated(node: dict[str, Any]) -> Optional[str]:
     stated = node.get("stated_at")
     if isinstance(stated, list):
         dates = [d for d in stated if isinstance(d, str) and d]
-        return max(dates)[:10] if dates else None
-    return stated[:10] if isinstance(stated, str) and stated else None
+        return _one_line(max(dates), 32) if dates else None
+    return _one_line(stated, 32) if isinstance(stated, str) and stated else None
 
 
 def select_items(response: Any, query: RecallQuery, *, floor: bool = True) -> list[Item]:
@@ -379,9 +383,12 @@ def select_items(response: Any, query: RecallQuery, *, floor: bool = True) -> li
         if floor and not relevant(query, subject):
             continue
         status = status_tag(node)
-        line = f"- [{kind}] {_one_line(label, LABEL_MAX)}{status}"
+        assertion = _one_line(label, LABEL_MAX)
+        line = f"- [{kind}] {assertion}{status}"
         if informative:
-            line += f" — {_one_line(informative, SUMMARY_MAX)}"
+            detail = f" — {_one_line(informative, SUMMARY_MAX)}"
+            assertion += detail
+            line += detail
         docs = node.get("source_documents") if isinstance(node.get("source_documents"), list) else []
         source = _text(docs[0].get("title")) if docs and isinstance(docs[0], dict) else None
         provenance = "; ".join(
@@ -394,7 +401,11 @@ def select_items(response: Any, query: RecallQuery, *, floor: bool = True) -> li
         )
         if provenance:
             line += f" ({provenance})"
-        items.append(Item(uid=uid, line=line, identity=f"{uid}{status}"))
+        truth = _text(node.get("truth_status")) or _text(props.get("truth_status"))
+        retired = (superseded_by(node) is not None or truth in ("refuted", "retracted")
+                   or node.get("currently_valid") is False)
+        items.append(Item(uid=uid, line=line, identity=f"{uid}{status}", assertion=assertion,
+                          source_title=_one_line(source, SOURCE_MAX) if source else "", retired=retired))
         if _on_own_subject(query, subject):
             leading.add(uid)
     # "What about Postgres?" after a Redis discussion: Postgres first.
@@ -421,6 +432,7 @@ class Recalled:
     source: str = "none"
     # Separate successful empty recall from a failed/late request.
     outcome: str = "not_requested"
+    items: tuple[Item, ...] = ()
 
 
 @dataclass
@@ -549,7 +561,8 @@ class RecallEngine:
             text = render_items(fresh, self.config.max_chars)
             shown = [item for item in fresh if item.line in text]
             conversation.injected.update(item.identity for item in shown)
-        return Recalled(text=text, count=len(shown), source=source if shown else "none", outcome="success")
+        return Recalled(text=text, count=len(shown), source=source if shown else "none", outcome="success",
+                        items=tuple(shown))
 
     def after_turn(self, session: str) -> Optional[threading.Thread]:
         """Once a turn completes: retry a recall that failed, so the next

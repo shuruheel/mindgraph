@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import secrets
 import sqlite3
 import statistics
@@ -39,47 +40,77 @@ class Outcome:
     recall_ms: float = 0.0
     injected: str = ""
     retrieval_outcome: str = "not_requested"
+    recalled_items: list[dict[str, Any]] = field(default_factory=list)
 
 
-def score(scenario: Scenario, injected: str, code: str) -> Outcome:
-    """Judge what was injected for the probe. Pure, so it is unit-tested."""
+def _fixture_item(line: str) -> dict[str, Any]:
+    """Readable fixture support only. Live scoring always uses structured Items."""
+    content = line.split(" (stated ", 1)[0].split(" (source:", 1)[0]
+    content = re.sub(r"^- \[[^\]]+\] ", "", content)
+    retired = False
+
+    def annotation(match):
+        nonlocal retired
+        value = match.group(1)
+        prefixes = (*NOT_CURRENT, "CONFLICT:", "NOT VALID AT THE REQUESTED TIME", "CURRENT",
+                    "LATEST ON THIS SUBJECT", "LATER STATEMENT:")
+        if not value.startswith(prefixes):
+            return match.group(0)  # Brackets can be ordinary assertion content.
+        status = value.split("LATER STATEMENT:", 1)[0]
+        retired = retired or any(
+            part.strip() == tag or part.strip().startswith(tag + " by ")
+            for part in status.split(";") for tag in NOT_CURRENT
+        )
+        return ""
+
+    content = re.sub(r" \[([^\]]*)\]", annotation, content)
+    return {"line": line, "assertion": content, "source_title": "", "retired": retired}
+
+
+def score(scenario: Scenario, injected: str, code: str,
+          recalled_items: Optional[list[dict[str, Any]]] = None) -> Outcome:
+    """Score displayed assertions and authoritative status separately.
+
+    The live path supplies the renderer's structured selected Items. Text-only
+    inputs are kept for readable unit fixtures, never used by run_suite.
+    """
     fill = lambda text: text.replace("{code}", code)  # noqa: E731
     lines = [line for line in injected.splitlines() if line.strip()]
-    items = [line for line in lines if line.lstrip().startswith("- [")]
-    # Topic answers must come from this run, not an unrelated resume brief.
-    owned = [line for line in items if code.lower() in line.lower()
-             or f"eval-{code[6:].lower()}-" in line.lower()]
-    evidence = lines if scenario.name == "interrupted_work" else owned
-    lowered = "\n".join(evidence).lower()
+    item_lines = [line for line in lines if line.lstrip().startswith("- [")]
+    items = recalled_items if recalled_items is not None else [_fixture_item(line) for line in item_lines]
     failures: list[str] = []
+    if recalled_items is not None and (
+        len(items) != len(item_lines) or any(item.get("line") not in item_lines for item in items)
+    ):
+        failures.append("structured recall evidence does not match the injected items")
+    owned = [item for item in items if code.lower() in item["assertion"].lower()
+             or f"eval-{code[6:].lower()}-" in item.get("source_title", "").lower()]
+    evidence = owned
+    lowered = ("\n".join(lines) if scenario.name == "interrupted_work" else
+               "\n".join(item["assertion"] for item in evidence)).lower()
     expected = [fill(phrase) for phrase in scenario.expect]
-    # The once-per-conversation open-work brief is not topic recall; only recalled items count.
-    if scenario.expect_nothing and items:
-        failures.append(f"expected no recalled items for an unrelated message, got {len(items)}")
+    if scenario.expect_nothing and item_lines:
+        failures.append(f"expected no recalled items for an unrelated message, got {len(item_lines)}")
     for phrase in expected:
         if phrase.lower() not in lowered:
             failures.append(f"missing: {phrase!r}")
     for phrase in map(fill, scenario.stale):
-        for line in evidence:
-            if phrase.lower() not in line.lower():
+        for item in evidence:
+            content = item["assertion"].lower()
+            if phrase.lower() not in content:
                 continue
-            marked = any(tag in line for tag in NOT_CURRENT)
-            corrected = any(want.lower() in line.lower() for want in expected)
-            if not (marked or corrected):
-                failures.append(f"stale shown as current: {phrase!r} in {line.strip()[:120]!r}")
+            corrected = any(want.lower() in content for want in expected)
+            if not (item.get("retired") is True or corrected):
+                failures.append(f"stale shown as current: {phrase!r} in {item['line'].strip()[:120]!r}")
     for phrase in map(fill, scenario.forbid):
         if phrase.lower() in injected.lower():
             failures.append(f"forbidden text came back: {phrase!r}")
     subject = [fill(term).lower() for term in scenario.subject]
-    irrelevant = sum(1 for line in items if not any(term in line.lower() for term in subject))
+    irrelevant = sum(1 for line in item_lines if not any(term in line.lower() for term in subject))
     return Outcome(
-        scenario=scenario.name,
-        passed=not failures,
-        failures=failures,
-        injected_chars=len(injected),
-        injected_items=len(items),
-        irrelevant_items=irrelevant,
-        injected=injected,
+        scenario=scenario.name, passed=not failures, failures=failures,
+        injected_chars=len(injected), injected_items=len(item_lines), irrelevant_items=irrelevant,
+        injected=injected, recalled_items=items,
     )
 
 
@@ -106,11 +137,13 @@ class Host:
 
             setattr(client, operation, observed)
         self.retrieval_outcome = "not_requested"
+        self.recalled_items: list[dict[str, Any]] = []
         recall = self.provider._recall.recall
 
         def observe_recall(*args, **kwargs):
             result = recall(*args, **kwargs)
             self.retrieval_outcome = result.outcome
+            self.recalled_items = [asdict(item) for item in result.items]
             return result
 
         self.provider._recall.recall = observe_recall
@@ -303,7 +336,7 @@ def run_suite(*, base_url: str, api_key: str, home: Path, wait_s: float, only: O
         host = Host(home, f"eval-{run}-{scenario.name}-probe", task_uid=task_uids.get(scenario.name, ""))
         injected, elapsed = host.probe(scenario.probe.replace("{code}", code))
         host.provider.shutdown()
-        outcome = score(scenario, injected, code)
+        outcome = score(scenario, injected, code, host.recalled_items)
         outcome.retrieval_outcome = host.retrieval_outcome
         if host.retrieval_outcome != "success":
             outcome.passed = False
