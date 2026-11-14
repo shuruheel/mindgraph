@@ -90,6 +90,16 @@ def test_every_contract_tool_has_a_handler():
     assert {tool["name"] for tool in _contract()["tools"]} == set(HANDLERS)
 
 
+def test_instructions_include_guidance_after_escaped_backtick_semicolon():
+    instructions = _contract()["instructions"]
+    assert "`hybrid`; use `document_index`" in instructions
+    assert "## Comprehensive read tools" in instructions
+    assert "## When to WRITE" in instructions
+    assert "## Tool tips" in instructions
+    assert not instructions.endswith("\\")
+    assert "mindgraph_code" not in instructions
+
+
 @pytest.mark.parametrize("tool", _contract()["tools"], ids=lambda tool: tool["name"])
 def test_every_advertised_property_is_consumed(tool):
     module, function = HANDLERS[tool["name"]]

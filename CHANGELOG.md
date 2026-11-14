@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.2.0 (2026-11-13)
+
+- Required checkpoints reject queue overflow atomically instead of evicting accepted evidence. Migrates the capture schema and repairs stale deduplication records from previously dropped batches.
+- Replace the two-second undo heuristic with session generations propagated through Hermes's background context; immediate new turns survive, including identical corrections.
+- Persist built-in memory changes in an ordered outbox with restart recovery, retries, cross-instance leases and visible delivery status. Save replacements before forgetting old entries; identical replacements never delete themselves.
+- Capture parent-side delegation tasks/results with child session IDs, and preserve supplied participant ID, name and bot attribution on ordinary turns.
+- Add queue, provider and real-Hermes regression coverage for capacity failures, undo ordering, outages, restart recovery, delegation and author attribution.
+- Report and disable ordinary turn/delegation capture in isolated plugin-host mode, whose RPC contract lacks the turn identity needed for correct undo. Recall, tools, mirroring and required checkpoint snapshots remain available.
+
+- Sync the general tool contract with released mindgraph-mcp 0.27.0: preview/confirm forget, restore with partial edge-failure reporting, bounded job waiting, and conversation-start briefs with partial-read warnings. Hermes omits the MCP workspace resolver and progress notifications.
+- Fix instruction extraction stopping at an escaped inline backtick, restoring the missing comprehensive-read, write and tool-tip guidance in the static system prompt.
+
 ## 1.1.0 (2026-11-11)
 
 ### Added

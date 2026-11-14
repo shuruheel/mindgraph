@@ -13,6 +13,7 @@ import hashlib
 import json
 import math
 import re
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Any, Callable, Optional
@@ -44,8 +45,10 @@ class MemoryRuntimeConfig:
     # the provider's sync_turn/on_session_end (capture) and prefetch (delivery).
     automatic_capture: bool = False
     automatic_delivery: bool = False
+    capture_unavailable_reason: Optional[str] = None
     # Hermes only: the capture queue's state (pending, failed, last delivery).
     capture_status: Optional[Callable[[], Rec]] = None
+    mirror_status: Optional[Callable[[], Rec]] = None
 
 
 def _obj(value: Any) -> Optional[Rec]:
@@ -104,7 +107,8 @@ def memory_status(config: MemoryRuntimeConfig) -> Rec:
         degradation.append(
             {
                 "code": "automatic_capture_unavailable",
-                "message": "This integration does not observe host lifecycle events; explicit typed write tools remain available.",
+                "message": config.capture_unavailable_reason or
+                           "Automatic transcript capture is disabled; explicit typed write tools remain available.",
             }
         )
     degradation.append(
@@ -124,9 +128,19 @@ def memory_status(config: MemoryRuntimeConfig) -> Rec:
         }
     )
     queue = _capture_report(config, degradation)
+    mirror = None
+    if config.mirror_status is not None:
+        try:
+            mirror = config.mirror_status()
+            if mirror.get("last_error") or mirror.get("enqueue_failures") or not mirror.get("durable"):
+                degradation.append({"code": "memory_mirror_delayed", "message":
+                                    "Built-in memory mirroring is degraded; inspect memory_mirror for pending changes."})
+        except Exception as exc:
+            degradation.append({"code": "memory_mirror_unavailable", "message": str(exc)})
     return {
         "schema_version": RESULT_SCHEMA_VERSION,
         "action": "status",
+        **({"memory_mirror": mirror} if mirror is not None else {}),
         # The cumulative M-profile claim needs per-application qualification; the
         # provider's automatic behavior is stated below instead of upgrading it.
         "profile": "M0",
@@ -205,6 +219,10 @@ def _capture_report(config: MemoryRuntimeConfig, degradation: list[Rec]) -> Opti
                 "queue exceeded its size bound.",
             }
         )
+    if queue.get("capacity_rejections"):
+        degradation.append({"code": "capture_capacity_rejected", "message":
+                            f"{queue['capacity_rejections']} capture write(s) were rejected at capacity; "
+                            "accepted evidence was retained. Required checkpoints block compression until capacity is freed."})
     if queue.get("failed_extraction_jobs"):
         degradation.append(
             {
@@ -399,6 +417,80 @@ def handle_memory_tool(rt: Runtime, args: Rec, config: MemoryRuntimeConfig) -> s
         return tool_error(exc)
 
 
+def _conversation_brief(rt: Runtime, args: Rec, agent_id: Optional[str], budget: int):
+    scope_uids = list(dict.fromkeys([
+        *(_strings(args.get("scope_uids")) or []),
+        *([args["project_uid"]] if _text(args.get("project_uid")) else []),
+    ]))
+    calls = {
+        "work": lambda: rt.client.plan(**_defined({
+            "action": "resume_work", "scope_uids": scope_uids or None, "limit": 6, "agent_id": agent_id,
+        })),
+        "goals": lambda: rt.client.get_goals(),
+        "decisions": lambda: rt.client.get_open_decisions(),
+        "preferences": lambda: rt.client.retrieve(action="preferences", k=8),
+    }
+    raw, unavailable = {}, []
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        futures = {name: pool.submit(call) for name, call in calls.items()}
+        for name, future in futures.items():
+            try:
+                raw[name] = future.result()
+            except Exception:
+                unavailable.append({"work": "work in progress", "decisions": "open decisions"}.get(name, name))
+    if len(unavailable) == 4:
+        return None
+    sections, candidates = [], []
+    work = _obj(raw.get("work")) or {}
+    if _obj(work.get("task")) or work.get("other_eligible"):
+        rendered = render_resume_context(work, budget // 2)
+        if rendered:
+            rendered = re.sub(r"^# Resume context[^\n]*\n+", "", rendered)
+            rendered = re.sub(r"^## ", "### ", rendered, flags=re.M)
+            rendered = re.sub(
+                r"^### (?:Code targets|Recent executions|Selection)\n(?:(?!### ).*\n?)*",
+                "", rendered, flags=re.M,
+            )
+            rendered = re.sub(r"^- Other scopes: ", "- ", rendered, flags=re.M).rstrip()
+            sections.append("## Work in progress\n" + rendered)
+            candidates.extend(_resume_candidates(work))
+
+    def node(value):
+        value = _obj(value) or {}
+        return _obj(value.get("node")) or value
+
+    for name, title, kind in [
+        ("goals", "Active goals", "Goal"), ("decisions", "Open decisions", "Decision"),
+        ("preferences", "Preferences", "Preference"),
+    ]:
+        values = raw.get(name)
+        values = list(values) if isinstance(values, list) else []
+        if name != "preferences":
+            values = [v for v in values if (_obj(node(v).get("props")) or {}).get("source") != "document"]
+            values.sort(key=lambda v: (
+                bool(_text((_obj(node(v).get("props")) or {}).get("source"))),
+                -(_number(node(v).get("updated_at")) or 0),
+            ))
+        items = [(item, _text((_obj(node(v).get("props")) or {}).get("status")))
+                 for v in values if (item := _compact_item(v, kind))]
+        if not items:
+            continue
+        more = len(items) - 6
+        lines = [f"## {title}" + (f" (6 shown, {more} more)" if more > 0 else "")]
+        for item, status in items[:6]:
+            label = item.get("label") or "(unlabeled)"
+            label = label if len(label) <= 160 else label[:159] + "…"
+            lines.append(f"- {label} [{item['uid']}]" + (f" — {status}" if status else ""))
+            candidates.append(item)
+        sections.append("\n".join(lines))
+    rendered = "\n\n".join(sections) or (
+        "Nothing to orient on yet: no work in progress, active goals, open decisions or stored preferences."
+    )
+    if len(rendered) > budget:
+        rendered = rendered[:max(0, budget - 40)].rstrip() + "\n…[brief truncated to the output budget]"
+    return raw, rendered, candidates, unavailable
+
+
 def _handle(rt: Runtime, args: Rec, config: MemoryRuntimeConfig) -> str:
     action = _text(args.get("action"))
     agent_id = _text(args.get("agent_id")) or config.agent_id
@@ -408,13 +500,22 @@ def _handle(rt: Runtime, args: Rec, config: MemoryRuntimeConfig) -> str:
         return err("action must be 'status' or 'context'")
 
     mode = _text(args.get("mode")) or ("topic" if _text(args.get("query")) else None)
-    if mode not in ("topic", "continuity", "resume"):
-        return err("action='context' requires mode='topic', 'continuity', or 'resume'")
+    if mode not in ("topic", "continuity", "resume", "brief"):
+        return err("action='context' requires mode='brief', 'topic', 'continuity', or 'resume'")
+    if args.get("scope") is not None:
+        return err("Workspace scope requires the local MindGraph MCP code adapter. Pass scope_uids instead.")
     budget = _output_budget(args.get("max_output_chars"))
     query = _text(args.get("query"))
     project_uid = _text(args.get("project_uid"))
 
-    if mode == "topic":
+    brief_unavailable = []
+    if mode == "brief":
+        brief = _conversation_brief(rt, args, agent_id, budget)
+        if brief is None:
+            return err("The brief could not be read: every section failed. Try mode='resume' or mode='topic'.")
+        raw, rendered, candidates, brief_unavailable = brief
+        strategy = "brief"
+    elif mode == "topic":
         if not query:
             return err("mode='topic' requires a non-empty query of 1-3 discriminating keywords")
         limit = args.get("limit")
@@ -509,6 +610,10 @@ def _handle(rt: Runtime, args: Rec, config: MemoryRuntimeConfig) -> str:
             "bounded": len(candidates) > len(items) or "item(s) omitted" in rendered,
         },
         "freshness": _defined({"valid_at": _text(args.get("valid_at")), "latest_source_timestamp": _latest_timestamp(raw)}),
-        "warnings": _context_warnings(raw, rendered, len(candidates), len(items)),
+        "warnings": _context_warnings(raw, rendered, len(candidates), len(items)) + ([{
+            "code": "brief_section_unavailable",
+            "message": "Not read, so absent from this brief (not evidence there are none): "
+            + ", ".join(brief_unavailable) + ".",
+        }] if brief_unavailable else []),
     }
     return text(rendered, structured=structured)

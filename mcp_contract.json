@@ -1,5 +1,5 @@
 {
-  "mcp_version": "0.25.0",
+  "mcp_version": "0.27.0",
   "tools": [
     {
       "name": "mindgraph_capture",
@@ -1073,6 +1073,12 @@
             "type": "string",
             "description": "Job ID to check status (for job_status action)"
           },
+          "wait_seconds": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 50,
+            "description": "job_status with job_id: wait up to this many seconds (max 50) for the job to finish, instead of returning at once. A job still running at the end comes back with still_running: true; call again to keep waiting."
+          },
           "format": {
             "type": "string",
             "enum": [
@@ -1121,6 +1127,12 @@
           "job_id": {
             "type": "string",
             "description": "Job ID to poll (for action='job_status')"
+          },
+          "wait_seconds": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 50,
+            "description": "job_status with job_id: wait up to this many seconds (max 50) for the job to finish, instead of returning at once. A job still running at the end comes back with still_running: true; call again to keep waiting."
           },
           "format": {
             "type": "string",
@@ -1271,7 +1283,7 @@
     },
     {
       "name": "mindgraph_remember",
-      "description": "Small-text memory fast path. 'remember' stores one fact, preference, decision or note synchronously; it is BM25- and vector-searchable the moment the call returns (the response says which). Pass a stable custom_id (e.g. 'pref:theme', 'deploy:target') so re-sending the same key UPDATES the same memory instead of creating a duplicate — that is the idempotency contract; without custom_id an exact duplicate is reused. 'forget' reversibly removes a memory by uid or custom_id (tombstone plus connected edges): call it with dry_run=true first to see the edge uids it would remove, then without. Undo with mindgraph_capture-independent server actions /evolve restore and restore_edge. Use mindgraph_capture for typed entities, sources and skills, and mindgraph_ingest for documents longer than a few paragraphs.",
+      "description": "Small-text memory fast path. 'remember' stores one fact, preference, decision or note synchronously; it is BM25- and vector-searchable the moment the call returns (the response says which). Pass a stable custom_id (e.g. 'pref:theme', 'deploy:target') so re-sending the same key UPDATES the same memory instead of creating a duplicate — that is the idempotency contract; without custom_id an exact duplicate is reused. 'forget' reversibly removes a memory by uid or custom_id (tombstone plus connected edges): the first call returns a preview of the edge uids it would remove and changes nothing; call it again with confirm=true to remove. 'restore' undoes a forget: pass the uid and the edge_uids the forget returned. Use mindgraph_capture for typed entities, sources and skills, and mindgraph_ingest for documents longer than a few paragraphs.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -1279,9 +1291,10 @@
             "type": "string",
             "enum": [
               "remember",
-              "forget"
+              "forget",
+              "restore"
             ],
-            "description": "remember = store/upsert one small text; forget = reversible removal"
+            "description": "remember = store/upsert one small text; forget = reversible removal, two steps: call once to preview, then again with confirm: true; restore = undo a forget"
           },
           "text": {
             "type": "string",
@@ -1297,11 +1310,23 @@
           },
           "uid": {
             "type": "string",
-            "description": "forget: node uid to remove (alternative to custom_id)"
+            "description": "forget: node uid to remove (alternative to custom_id). restore: the uid a forget returned"
+          },
+          "edge_uids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 500,
+            "description": "restore: the edge_uids the forget returned, to bring the memory's connections back with it"
           },
           "dry_run": {
             "type": "boolean",
             "description": "forget: preview the affected edge uids without changing anything"
+          },
+          "confirm": {
+            "type": "boolean",
+            "description": "forget: must be true to remove anything. Without it, forget returns a preview of what would be removed and changes nothing."
           },
           "cascade": {
             "type": "boolean",
@@ -1339,7 +1364,7 @@
     },
     {
       "name": "mindgraph_memory",
-      "description": "Read the portable MindGraph memory surface. Use action='context' with mode='resume' or 'continuity' for authoritative task-first work state, and mode='topic' with a short keyword query for prior knowledge relevant to the user's request. Use action='status' to inspect integration capabilities and limitations. This tool never writes; durable capture and correction use the existing typed MindGraph write tools.",
+      "description": "Read the portable MindGraph memory surface. Use action='context' with mode='brief' once at the start of a conversation for work in progress, active goals, open decisions and preferences; mode='resume' or 'continuity' for authoritative task-first work state, and mode='topic' with a short keyword query for prior knowledge relevant to the user's request. Use action='status' to inspect integration capabilities and limitations. This tool never writes; durable capture and correction use the existing typed MindGraph write tools.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -1356,9 +1381,10 @@
             "enum": [
               "topic",
               "continuity",
-              "resume"
+              "resume",
+              "brief"
             ],
-            "description": "Context strategy. topic uses query-shaped retrieval; continuity/resume use authoritative task-first resume_work."
+            "description": "Context strategy. brief is the conversation-start orientation: work in progress, active goals, open decisions and stored preferences in one bounded call. topic uses query-shaped retrieval; continuity/resume use authoritative task-first resume_work."
           },
           "query": {
             "type": "string",
@@ -1455,5 +1481,5 @@
       }
     }
   ],
-  "instructions": "You have access to a persistent knowledge graph via MindGraph.\n\n## Default memory workflow: orient → answer → preserve\n\n**Orient only when prior durable state may matter.** Self-contained questions do not require a memory call or a warm-up sequence.\n\n- Resuming work, asking what was in progress, or continuing a task: call `mindgraph_memory` once with action `context` and mode `resume` or `continuity`. This uses authoritative, task-first, lease-aware work state.\n- Asking about a topic that may depend on prior knowledge: call `mindgraph_memory` once with action `context`, mode `topic`, and 1–3 discriminating keywords.\n- Asking about integration capability or automatic behavior: call `mindgraph_memory` with action `status`.\n- Use the comprehensive read tools below only when the high-level result is insufficient or the user asks for a specific graph operation.\n\n**Answer from the bounded result.** Treat superseded, refuted, or out-of-validity items as warnings, not current facts. Retrieval proves only that the server returned context; it does not prove that a host automatically injected or used it.\n\n**Respect failed tool results.** An isError result is a failed operation, not evidence that the graph has no matches. Preserve its code and retry guidance. If retriable is false, do not automatically repeat the unchanged call or silently substitute another retrieval mode. Explain the failure; a narrower query or a later user-requested retry is a separate decision.\n\n**Preserve selectively after material durable change.** Use the existing typed write tool for a fact, correction, decision, work-state transition, or reusable lesson. Do not write ephemeral conversation, routine mechanics, unsupported guesses, or information already represented accurately. An explicit no-write is the correct outcome when nothing durable changed.\n\n## Topic retrieval details\n\nTopic context is graph-only by default. Set `include_chunks: true` only for source text needed for quotes, citations, or missing detail. Query with a few proper nouns or technical terms rather than a full sentence. If keyword retrieval succeeds but returns no matches, use `mindgraph_retrieve` with `semantic` or `hybrid\\"
+  "instructions": "You have access to a persistent knowledge graph via MindGraph.\n\n## Default memory workflow: orient → answer → preserve\n\n**Orient only when prior durable state may matter.** Self-contained questions do not require a memory call or a warm-up sequence.\n\n- Resuming work, asking what was in progress, or continuing a task: call `mindgraph_memory` once with action `context` and mode `resume` or `continuity`. This uses authoritative, task-first, lease-aware work state.\n- Asking about a topic that may depend on prior knowledge: call `mindgraph_memory` once with action `context`, mode `topic`, and 1–3 discriminating keywords.\n- Asking about integration capability or automatic behavior: call `mindgraph_memory` with action `status`.\n- Use the comprehensive read tools below only when the high-level result is insufficient or the user asks for a specific graph operation.\n\n**Answer from the bounded result.** Treat superseded, refuted, or out-of-validity items as warnings, not current facts. Retrieval proves only that the server returned context; it does not prove that a host automatically injected or used it.\n\n**Respect failed tool results.** An isError result is a failed operation, not evidence that the graph has no matches. Preserve its code and retry guidance. If retriable is false, do not automatically repeat the unchanged call or silently substitute another retrieval mode. Explain the failure; a narrower query or a later user-requested retry is a separate decision.\n\n**Preserve selectively after material durable change.** Use the existing typed write tool for a fact, correction, decision, work-state transition, or reusable lesson. Do not write ephemeral conversation, routine mechanics, unsupported guesses, or information already represented accurately. An explicit no-write is the correct outcome when nothing durable changed.\n\n## Topic retrieval details\n\nTopic context is graph-only by default. Set `include_chunks: true` only for source text needed for quotes, citations, or missing detail. Query with a few proper nouns or technical terms rather than a full sentence. If keyword retrieval succeeds but returns no matches, use `mindgraph_retrieve` with `semantic` or `hybrid`; use `document_index` to inspect ingested sources.\n\n## Comprehensive read tools\n\n- Explicit graph inventory or state questions → the matching `mindgraph_retrieve` action such as `document_index`, `active_goals`, or `open_questions`\n- Advice or recommendations → `mindgraph_retrieve` action `preferences`, with topic keywords\n- Explore around a known node → `mindgraph_retrieve` action `neighborhood` with start_uid\n- Find connections between nodes → `mindgraph_retrieve` action `path` with start_uid + end_uid\n\n## When to WRITE\n\nCapture knowledge when the user shares something worth remembering:\n- People/orgs/places/events → `mindgraph_capture` action \"entity\"\n- Quick notes, preferences → `mindgraph_capture` action \"journal\"\n- Factual observations → `mindgraph_capture` action \"observation\"\n- Claims with evidence → `mindgraph_reason` action \"claim\"\n- Questions to track → `mindgraph_reason` action \"open_question\"\n- Goals or projects → `mindgraph_commit` action \"goal\"/\"project\"\n- Decisions → `mindgraph_commit` action \"open_decision\"\n- Durable engineering work that must survive sessions/harnesses → `mindgraph_plan`\n- Reusable learning from a material attempt → `mindgraph_capture` action \"lesson\"\n- Long-form content → `mindgraph_ingest`\n- Cross-document synthesis over a project corpus → `mindgraph_synthesize` (action \"signals\" for structural signals; action \"run\" to spawn a synthesis job that writes Article nodes)\n\n## Tool tips\n\n- Use the harness todo list to organize only the current harness's local execution. Use `mindgraph_plan` when work is authoritative across sessions/harnesses, needs graph relationships or evidence, or must be visible to other agents. Do not maintain the same item in both.\n- If a local harness task remains unfinished and should become authoritative outside that local list, promote it once with a stable idempotency key when the graph-managed composite actions are available; otherwise do not copy it.\n- `capture`: \"entity\"/\"observation\" for facts, \"journal\" for personal/informal\n- `reason`: \"claim\" when evidence exists, \"open_question\"/\"hypothesis\" otherwise\n- `retrieve`: \"context\" returns graph nodes only by default — set include_chunks=true for source text\n- `retrieve`: \"context\" (FTS default) → \"semantic\" (conceptual fallback) → \"hybrid\" (both)\n- `retrieve`: \"neighborhood\"/\"chain\"/\"path\"/\"subgraph\" for graph exploration\n- Confidence: 0.9+ for facts, 0.5-0.8 for uncertain, <0.5 for speculation\n- Don't narrate tool usage — capture naturally as part of conversation"
 }

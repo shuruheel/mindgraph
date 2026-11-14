@@ -88,4 +88,11 @@ def test_fixtures_cover_the_canonical_calls():
 @pytest.mark.parametrize("case", FIXTURES["cases"], ids=lambda case: case["id"])
 def test_plugin_sends_the_mcp_requests(case):
     expected = [{**request, "body": _normalize(request["body"])} for request in case["requests"]]
-    assert _replay(case) == expected
+    actual = _replay(case)
+    if case["id"] == "memory_brief":
+        # Independent brief sections run concurrently on both transports.
+        def key(request):
+            return json.dumps(request, sort_keys=True)
+        assert sorted(actual, key=key) == sorted(expected, key=key)
+    else:
+        assert actual == expected

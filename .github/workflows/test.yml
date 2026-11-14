@@ -33,7 +33,7 @@ jobs:
     name: real Hermes host
     runs-on: ubuntu-latest
     env:
-      HERMES_REF: 78abaafcccec20a546c94e8734a70e38c08a6a69
+      HERMES_REF: ae1ff71c39d8527227400c8e71acf9c57a8a59c6
     steps:
       - uses: actions/checkout@v4
       - uses: actions/checkout@v4
