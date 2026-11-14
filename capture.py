@@ -163,6 +163,7 @@ class Batch:
     # Unknown for recovered checkpoint text, including mixed batches.
     occurred_at: Optional[str] = None
     actor_scope: Optional[str] = None
+    turn_framing: Optional[dict[str, Any]] = None
 
     @property
     def tag(self) -> str:
@@ -185,17 +186,34 @@ def part_digest(role: str, text: str) -> str:
 
 
 def render_parts(parts: Iterable[tuple]) -> str:
+    return render_framed_parts(parts)[0]
+
+
+def render_framed_parts(parts: Iterable[tuple]) -> tuple[str, dict[str, Any]]:
+    """Frame actual captured roles with UTF-8 offsets; text cannot forge a turn."""
     labels = {"user": "User", "user_attribution": "User attribution", "assistant": "Assistant", "delegation_task": "Delegated task",
               "delegation_result": "Delegated result"}
-    rendered = []
+    rendered, spans = [], []
+    offset = 0
     for row in parts:
         role, text = row[:2]
         author = json.loads(row[2]) if len(row) > 2 and row[2] else None
         label = labels.get(role, role)
         if author:
             label += " " + json.dumps(author, ensure_ascii=False, sort_keys=True)
-        rendered.append(f"{label}: {text}")
-    return "\n\n".join(rendered)
+        segment = f"{label}: {text}"
+        length = len(segment.encode("utf-8"))
+        spans.append({"role": role, "plain_user": role == "user" and not author,
+                      "start": offset, "end": offset + length})
+        rendered.append(segment)
+        offset += length + 2
+    content = "\n\n".join(rendered)
+    framing = {"schema": "utf8-turn-spans/v1", "sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+               "spans": spans}
+    if len(json.dumps(framing).encode("utf-8")) > 60_000:
+        framing = {"schema": "utf8-turn-spans/unavailable", "sha256": framing["sha256"],
+                   "reason": "turn_span_budget_exceeded"}
+    return content, framing
 
 
 def retry_delay(attempts: int) -> float:
@@ -612,11 +630,13 @@ class CaptureQueue:
                     "UPDATE batches SET lease_owner = ?, lease_until = ?, uncertain = 1 WHERE batch_id = ?",
                     (self._owner, now + LEASE_S, row[0]),
                 )
+                content, framing = render_framed_parts(parts)
                 return Batch(
-                    row[0], row[1], row[2], row[3], render_parts(parts), row[4], row[5], bool(row[6]),
+                    row[0], row[1], row[2], row[3], content, row[4], row[5], bool(row[6]),
                     _iso(parts[0][3]),
                     _iso(parts[0][3]) if all(part[4] == "turn" for part in parts) else None,
                     self._db.execute("SELECT value FROM meta WHERE key = 'actor_scope'").fetchone()[0],
+                    framing,
                 )
 
         return self._tx(work)

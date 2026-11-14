@@ -578,6 +578,7 @@ class MindGraphMemoryProvider(MemoryProvider):
                 context=json.dumps({
                     "schema": "memory-capture/v1",
                     "actor_scope": batch.actor_scope,
+                    "turn_framing": batch.turn_framing,
                     "captured_at": batch.captured_at,
                     "time_basis": "live_turns" if batch.occurred_at else "checkpoint_observation",
                     "note": (

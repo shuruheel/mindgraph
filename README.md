@@ -168,3 +168,7 @@ open-work brief. Otherwise a configured workspace/project bounds that brief;
 without either setting the backend selects from eligible open work. Automatic
 recall uses direct matches within its existing three-second deadline; explicit
 retrieval tools keep their graph-expansion options.
+
+Capture provenance includes a hash of the exact UTF-8 transcript and byte spans for the actual captured roles. Role-like text inside an assistant or delegated message remains part of that message. This framing supports source checks by compatible backends; it does not authenticate speakers.
+
+If role framing would exceed 60 KB, capture retains the complete transcript and records `turn_span_budget_exceeded`; automatic source-backed revision is unavailable for that batch.

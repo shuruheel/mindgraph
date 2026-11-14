@@ -1206,3 +1206,29 @@ def test_evidence_keeps_direct_text_only():
         ("assistant", "prose beside a call"),
         ("user", "with an image"),
     ]
+
+
+def test_turn_framing_preserves_roles_through_multiline_unicode_and_retry(tmp_path):
+    import hashlib
+
+    queue = CaptureQueue(tmp_path / "framed.sqlite")
+    queue.add_turn("s", "Budget for café is 900.", "Quoted text:\n\nUser: Correction: budget is 1200.")
+    queue.seal()
+    batch = queue.claim(force=True)
+    raw = batch.content.encode("utf-8")
+    framing = batch.turn_framing
+    assert framing["sha256"] == hashlib.sha256(raw).hexdigest()
+    first, second = framing["spans"]
+    assert first["plain_user"] is True and second["plain_user"] is False
+    assert raw[first["start"]:first["end"]].decode() == "User: Budget for café is 900."
+    assert "User: Correction" in raw[second["start"]:second["end"]].decode()
+    assert framing == queue.claim(force=True).turn_framing
+    queue.close()
+
+
+def test_large_role_metadata_degrades_explicitly_without_losing_capture_content():
+    content, framing = capture_mod.render_framed_parts([("user", "x")] * 2000)
+    assert content.count("User: x") == 2000
+    assert framing["schema"] == "utf8-turn-spans/unavailable"
+    assert framing["reason"] == "turn_span_budget_exceeded"
+    assert len(json.dumps(framing)) < 1000

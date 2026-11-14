@@ -96,7 +96,7 @@ it does not authenticate speakers. Live scoring now uses the actual displayed
 assertions and structured retirement status, preventing source titles or
 later-statement references from supplying false evidence.
 
-Local validation: 486 unit tests and 33 real-Hermes host tests passed; Ruff
+Local validation before role framing: 486 unit tests and 33 real-Hermes host tests passed; Ruff
 passed. Independent contract and scorer/protocol reviews found no remaining
 blocking plugin defects. These changes have not had a live acceptance run.
 
@@ -112,3 +112,14 @@ one immutable candidate, then the actual-Hermes capture/new-session recall pair.
 Consumed so far: one suite, six extraction jobs, 14 rows, zero agent model calls.
 Do not claim broader acceptance or publish these changes as qualified before
 those gates pass. The pending release remains distinct from released v1.2.0.
+
+The follow-up capture framing patch records actual UTF-8 role spans and a
+transcript hash. This prevents assistant text containing a user-looking header
+from supplying false speaker evidence to revision review. Framing over 60 KB
+is explicitly unavailable without losing captured text. The backend prototype
+is opt-in and remains undeployed; it requires complete role framing and source
+snapshot checks before writing revision certificates. No further live suite
+or agent model call has been used.
+
+Role-framing validation: 488 unit tests, 33 real-host tests and Ruff passed.
+Independent capture contract review found no remaining source-level blockers.

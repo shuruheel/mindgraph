@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Bind captured role spans to the exact transcript hash so embedded role headers cannot impersonate a captured user turn.
+
 - Preserve capture-time provenance across retries without assigning recovered checkpoint text a new statement date; include a persistent profile namespace in versioned ingestion metadata.
 - Preserve full recall timestamps and server-provided current/later-statement cues. Later statements remain distinct from authoritative supersession.
 - Keep structured displayed assertions and retirement status for acceptance evidence, preventing source titles and reference labels from supplying answers or retirement markers.
