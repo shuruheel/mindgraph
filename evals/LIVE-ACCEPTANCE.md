@@ -287,3 +287,54 @@ on bounded review inputs and prior usage, not a guaranteed token/spend cap or a
 measured bill. Preserve actual token telemetry; extraction, embedding and
 Hermes model costs remain excluded. Success qualifies this private candidate
 and these functional scenarios only, not production or general memory efficacy.
+
+## Phase 4: compact support presentation after 9d47e2 — 2026-11-14
+
+Phase 3 is closed. Development af67d4 passed 6/6 and independent source review;
+confirmation 9d47e2 failed prerequisites with eight accepted rows and three jobs.
+Its corrected-fact job exceeded the 64,000-character review prompt budget before
+calling Sol. No recall was measured. Preserve both results, the 12 prior ledger
+entries and all **45 consumed review reservations**, including unused portions.
+
+Under the standing instruction to continue to broader acceptance, this separate
+phase qualifies a concrete prompt-representation fix. Full version, fingerprint
+and provenance evidence remains server-side in review_input and validation;
+the model receives every support's complete owning user turn, offsets and
+node/document/chunk IDs, every target/pair/identity, all node properties and full
+source text. No target or semantic input is dropped. Keep the 64,000-character
+evidence-plus-schema limit, unchanged response schema/decoder/fences, one request
+per supported chunk and 4,096 output tokens. Record the actual prompt, its size,
+and full audit input, including failures before model requests. Demonstrate the
+size failure and its correction offline. The post-run failed-current-node
+snapshot is a reconstruction; the original oversized input was not retained.
+Do not call it an exact replay. No paid diagnostic calls are added in this phase.
+
+Freeze the changed core/plugin SHAs, image/configuration, helper hashes, tests,
+source snapshot and preflight before one `phase4-development-1` suite. If it
+passes 6/6 plus independent source review, require fresh
+`phase4-confirmation-1` and `phase4-confirmation-2`, both 6/6 and independently
+reviewed, on precisely that same candidate. The earlier development pass cannot
+qualify changed code. A failed prerequisite, score or review closes this phase;
+no unchanged rerun, rescore or substitution is permitted. All prior six scenarios,
+receipt/job/mirror gates, default recall settings, source review and actual-Hermes
+pair requirements remain unchanged. The model configuration is unchanged from
+phase 3, including Sol's mandatory default reasoning and Luna for actual Hermes.
+
+Raise cumulative ceilings explicitly to **nine suites, 54 suite jobs, 126 suite
+rows and 67 review reservations**. The new development and two confirmations
+reserve 18 reviews; the untouched four-agent-call allowance reserves at most
+four more. Append a phase-4 extension with the protocol hash and all prerequisite
+reservation IDs; do not reset or refund any earlier entry. All confirmations
+and agent calls remain gated by same-candidate independent reviews. The successful
+normal path uses two agent calls; the existing diagnosed-replacement rule alone
+permits the other two.
+
+Raise the review-stage planning allowance to **$14**. Carry $9.757396 from phase 3
+without credit and add the 12 newly allowed Sol reservations at the same
+75,000-input/4,096-output planning estimate and higher ordinary-route rates:
+$3.015672 additional, **$12.773068 carried estimate**. This is neither a measured
+bill nor a hard tokenizer/spend cap; extraction, embeddings and Hermes calls
+remain excluded. Retain actual provider telemetry. Independent contract and
+protocol review must clear the artifacts before paid ingestion. Qualification
+remains limited to this warmed private deployment and these functional scenarios;
+search bounds and uneditable aliases preclude exhaustive reconciliation claims.
