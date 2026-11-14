@@ -42,8 +42,8 @@ with a fresh codename, so earlier runs in the same org do not answer for it.
 - **Token overhead**: injected characters per probe (÷ 4 as a token estimate).
 - **Capture durability**: turns synced versus transcript rows the server
   accepted; batches left pending, parked or dropped.
-- **Extraction**: jobs created, how each ended, and seconds until the last
-  one finished.
+- **Extraction**: jobs created, how each ended, and final gate verification duration
+  (earlier input barriers are excluded; this is not total extraction latency).
 
 Not measured: whether a model uses the context well (that needs an agent in
 the loop), and dollars (the client cannot see the server's model spend;

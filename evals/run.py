@@ -357,7 +357,7 @@ def render(report: dict[str, Any]) -> str:
         f"(~{round(report['injected_chars_per_probe'] / 4)} tokens); irrelevant items: {report['irrelevant_items']}",
         f"capture: {capture['rows_accepted']}/{capture['rows_synced']} transcript rows accepted, "
         f"{capture['rows_undelivered']} undelivered, batches {capture['batches']}",
-        f"extraction: {len(extraction['statuses'])} job(s) in {extraction['seconds']} s: "
+        f"extraction: {len(extraction['statuses'])} job(s), final gate verification {extraction['seconds']} s: "
         f"{sorted(set(extraction['statuses'].values()))}",
     ]
     lines.extend(f"problem: {problem}" for problem in report["problems"])
@@ -370,7 +370,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--report", type=Path, help="write the JSON report here")
     parser.add_argument("--only", choices=[s.name for s in SCENARIOS], help="run one scenario by name")
     parser.add_argument("--home", type=Path, help="new persistent profile directory; refuses existing paths")
-    parser.add_argument("--wait", type=float, default=600.0, help="seconds to wait for extraction jobs")
+    parser.add_argument("--wait", type=float, default=600.0, help="shared input completion budget in seconds")
     args = parser.parse_args(argv)
 
     # Live failures retain their durable queue for diagnosis/recovery.

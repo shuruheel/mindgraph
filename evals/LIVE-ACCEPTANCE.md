@@ -63,3 +63,30 @@ Independent contract review covers the delivery/mirror gates, task scoping and
 runtime request changes before delivery. A passing result establishes these
 functional scenarios on the recorded candidate and backend; it does not establish
 multilingual quality, isolated plugin-host capture, or general agent efficacy.
+
+## Actual-Hermes conversation pair (frozen before model calls)
+
+Use one fresh profile and fresh `Orion` plus six random hexadecimal digits.
+Seed prompt: "For the {code} internal test project, the service window is Tuesday
+09:40 UTC and the mascot is copper badger. Reply only Noted. Do not use tools."
+Probe prompt in a genuinely new Hermes session with no prior chat messages:
+"For the {code} internal test project, what are the service window and mascot?
+Answer using your available context. Do not use tools."
+
+Require no explicit memory/retrieval tool calls in either session. Before the
+probe, verify the seed transcript's accepted receipt and completed extraction
+job, with no pending/dropped/failed capture. Save the actual session IDs, prompt
+and response records, automatic-recall outcome and injected context. The probe
+must have successful automatic retrieval under the frozen defaults, with the
+seed project and both facts present in its injected context; its final answer
+must contain `Tuesday`, `09:40 UTC`, and `copper badger`. Check that no native
+MEMORY.md/USER.md entry or earlier conversation supplies those facts. A passing
+answer without this capture-and-injection evidence is insufficient.
+
+Two invocations suffice for this pair. The remaining two-call allowance may only
+be used after diagnosing a concrete failure and recording a new candidate/run;
+retain the failed pair. Each suite/agent run manifest must record and assert the
+effective recall deadline, item limit, character budget and relevance floor,
+plus candidate/host/input hashes, backend identity and model identity. Manifests
+are saved before scoring; inherited environment overrides cannot silently alter
+the frozen defaults.
