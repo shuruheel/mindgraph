@@ -154,6 +154,8 @@ The `contract-drift` workflow (weekly, on demand, and on PRs touching the contra
 
 `evals/` is the memory outcome suite: six scripted scenarios (a changed preference, a corrected fact, interrupted work, a decision recalled across conversations, an unrelated message, a deletion) that measure what the next conversation gets back. The `eval` workflow runs it against a real org on demand; see `evals/README.md`.
 
+For a persistent remote Hermes environment, see [the private Fly test lab](deploy/hermes-lab/README.md). It pins Hermes and the released plugin, retains profiles and test evidence on a volume, and provides separate credential-free checks and interactive live sessions.
+
 ## License
 
 MIT
