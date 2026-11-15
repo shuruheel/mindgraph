@@ -398,3 +398,60 @@ Retain actual provider telemetry. Independent protocol review must clear the
 frozen artifacts before paid ingestion. Passing qualifies this warmed private
 candidate and these scenarios only; production deployment, general correction
 accuracy and exhaustive alias reconciliation remain outside this acceptance.
+
+## Phase 6: whole-assertion support after a70fa1 — 2026-11-15
+
+Phase 5 is closed. Development a70fa1 failed prerequisites after eight accepted
+rows and three jobs; no recall was measured. Planned extraction deferrals became
+job warnings. Partial independent source review additionally found a certified
+retirement of a still-true budget history: the old assertion included both 8,000
+and the later 12,500 correction, while its selected old quote supported only
+8,000. Preserve that review, the unchanged failed score/report, all 14 ledger
+entries and **57 reserved reviews**, including unused portions. No confirmations
+or actual-Hermes calls ran. The partial review is not an acceptance review pass.
+
+This phase qualifies the informational-deferral fix and a conservative source
+support guard. Allowed choices bind exact old/new support tuples. Each assertion's
+bounded literal quantities must occur in its chosen owning user turn; an Entity
+uses only its selected summary-edit span on the old side. Same-document choices
+must run forward between distinct user turns. Unsupported numeric notation
+conservatively excludes tuples. Full candidates, source text and anchors remain
+in the audit; eligible targets/pairs may narrow. These checks do not establish
+semantic entailment, atomicity, polarity or universal correction correctness.
+The model must preserve still-true histories and decline uncertainty. Independent
+source review still checks every actual retirement and recalled assertion.
+
+Before private paid development, freeze exact core/plugin/cloud/engine SHAs,
+built image digest/configuration, helper hashes, contract review and preflight.
+Require exact-candidate revision/choice/history tests, the ordinary-deferral job
+regression, the saved phase-5 input eligibility replay, strict Clippy and format.
+The fully passing 5c87e94 hosted suite is baseline evidence only. Full new-candidate
+hosted checks may run alongside private development, but must pass before final
+acceptance. Validation records distinguish the source/tested revision and scope;
+no interrupted build or prior-candidate pass substitutes for a changed-path gate.
+
+Run only `phase6-development-1`, then (after 6/6 and independent full source
+review) `phase6-confirmation-1` and `phase6-confirmation-2` on the same immutable
+candidate. Each must pass 6/6 and independent review before proceeding. Any failed
+prerequisite, execution, score or review closes the phase. No unchanged rerun,
+rescoring, paid diagnostic or replacement suite is allowed. All six scenarios,
+model settings, recall defaults, clean job/mirror/capture gates, expanded edge
+collection and actual-Hermes pair requirements remain unchanged. A partial
+source failure from a prerequisite-failed run cannot qualify any subsequent gate.
+
+Append a phase-6 ledger extension carrying every previous reservation ID and the
+phase-5 partial source-review hash. Raise cumulative ceilings to **eleven suites,
+66 suite jobs, 154 suite rows and 79 review reservations**. Reserve 18 reviews
+for development and two confirmations; retain at most four agent captures. No
+refunds or resets. Same-candidate full source review gates each next reservation.
+Two agent calls remain the normal successful path; only the existing diagnosed
+replacement rule permits the other two, and a successful pair is terminal.
+
+Keep the **$16 review-stage planning allowance**. Carry $14.280904 without credit
+and add six newly allowed Sol reservations at the same 75,000-input/4,096-output
+estimate and recorded higher ordinary-route rates: $1.507836 additional,
+**$15.788740 carried estimate**. This is not a measured bill or hard token/spend
+cap; extraction, embeddings and Hermes calls remain excluded. Retain actual
+provider telemetry. Independent protocol review must clear the frozen artifacts
+before paid ingestion. Qualification remains limited to the warmed private
+candidate and these functional scenarios, with no production deployment claim.
