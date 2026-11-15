@@ -548,7 +548,7 @@ confirmation or actual-agent calls ran in phase 7.
 
 The new private backend candidate adds prospective extraction cleanup under the
 existing framed single-user admission. Core source
-`75460c2fe940693440808a83e6d14a786ca0a945` also merges current main
+`2421206cce5da92c73e99eac32e85f5d184c56cb` includes the merge of current main
 `800f601`; the newer subject/name-capture features remain disabled in the private
 runtime. The earlier 37c3276 build was interrupted after discovering the PR
 merge conflict and is not validation evidence. Guidance separates user propositions from
@@ -571,6 +571,19 @@ strict Clippy and formatting, a fresh image/configuration observation, fresh
 plugin and real-host checks, and private search/context preflight. Distinguish
 private exact-source validation from hosted PR merge-candidate validation. Full
 hosted backend checks must pass before final acceptance. No production deployment.
+
+The first offline candidate `75460c2` failed its new fixture because the mock
+incorrectly used `Some("stop")`; this internal provider contract uses `None` for
+normal completion. The successor changes only that test fixture and requires
+empty warnings/provenance errors in every attribution pass. Retain the failed
+CI, focused run and diagnostic logs. No phase-8 paid reservation was consumed.
+The private image may reuse the normal release binary built from `75460c2` only
+with a recorded test-only diff and verified identical runtime source. Record
+that runtime build identity and its retained build timestamp separately from
+the successor test/source SHA; do not call it a successor runtime rebuild.
+Copy and verify the exact successor test source before every qualifying test,
+force test recompilation, and require successor CI. Prior cached test results
+do not qualify the successor.
 
 Use the unchanged phase-7 scorer, fixtures, six scenarios, expected answers,
 models, recall defaults, capture/job/mirror/latency gates and source collection.
