@@ -533,3 +533,71 @@ calls remain excluded. Record actual provider usage. Independent protocol review
 and final artifact preflight must clear before paid ingestion. Qualification is
 limited to these warmed private recall/retirement scenarios; cold latency,
 general extraction correctness and exhaustive reconciliation remain unqualified.
+
+## Phase 8: separate generated attribution after 76f301 — 2026-11-15
+
+Phase 7 is closed after development 76f301 scored **5/6**. Fourteen rows were
+accepted, six jobs completed cleanly, and recall stayed below three seconds.
+The preference probe recalled an obsolete current Constraint. Its summary mixed
+the user's prose requirement with “as confirmed by the assistant”; the reviewer
+correctly refused whole-node retirement. Independent review confirmed a real
+reconciliation failure, with all six other certificates supported. No historical
+scoring exemption was used. Preserve all eighteen entries and **81 review
+reservations**, including this failed score and its independent diagnosis. No
+confirmation or actual-agent calls ran in phase 7.
+
+The new private backend candidate adds prospective extraction cleanup under the
+existing framed single-user admission. Core source
+`75460c2fe940693440808a83e6d14a786ca0a945` also merges current main
+`800f601`; the newer subject/name-capture features remain disabled in the private
+runtime. The earlier 37c3276 build was interrupted after discovering the PR
+merge conflict and is not validation evidence. Guidance separates user propositions from
+routine acknowledgments while preserving substantive assistant information.
+Deterministic cleanup removes only the exact terminal attribution clause from a
+new Constraint summary with a nonempty description, preserving its entire prefix,
+label, properties and captured source. Unknown or qualified forms remain intact.
+The original and resulting summaries and rule ID are retained in the new node's
+ExtractedFrom location audit alongside its citation anchor. Existing deduplicated
+nodes are not rewritten. Whole-assertion revision rules, source fences and
+certificates remain unchanged. This does not repair pre-existing mixed nodes,
+prove general extraction correctness, or guarantee a separately extracted
+acknowledgment node. The precise contract is in the candidate's
+`docs/specs/transcript-revisions.md`.
+
+Freeze the backend source/image, plugin/protocol and all helper identities before
+execution. Require the four new mocked-provider-to-real-storage/prefix-refusal
+tests, all existing revision tests and the ordinary-retirement ownership test,
+strict Clippy and formatting, a fresh image/configuration observation, fresh
+plugin and real-host checks, and private search/context preflight. Distinguish
+private exact-source validation from hosted PR merge-candidate validation. Full
+hosted backend checks must pass before final acceptance. No production deployment.
+
+Use the unchanged phase-7 scorer, fixtures, six scenarios, expected answers,
+models, recall defaults, capture/job/mirror/latency gates and source collection.
+After probes, independent source review must additionally inspect every collected
+`extraction_normalization` audit: only the terminal unqualified attribution was
+removed, all prefix content remains, the captured source remains intact, and no
+audit claims to rewrite an existing reused node. Any uncertainty or material
+content loss fails acceptance. Preserve all existing per-UID history-exemption
+proofs and complete retirement/source-review gates.
+
+Run only `phase8-development-1`, followed by `phase8-confirmation-1` and
+`phase8-confirmation-2` on the same immutable candidate, each requiring 6/6 and a
+passed independent source review before the next reservation. A failed input,
+execution, score or source review closes this phase. No unchanged rerun,
+rescoring, substitution or paid diagnostic is allowed. Only after both fresh
+confirmations may the unchanged real-Hermes seed/new-session pair run; the normal
+successful path is two calls, with the existing diagnosed replacement rule and
+four-call maximum unchanged. Successful actual-agent acceptance is terminal.
+
+Carry all prior reservations without refund. Append a phase-8 extension binding
+the failed phase-7 diagnosis and prior entry IDs. Raise cumulative ceilings by
+one suite to **fifteen suites, 90 suite jobs, 210 suite rows and 103 reviews**.
+The eighteen newly reserved suite reviews plus at most four agent captures fit
+81 + 18 + 4 = 103. Keep the **$22 review-stage planning allowance**: carry
+$20.312248 and add the six newly allowed Sol reviews at the same planning rate,
+$1.507836, for **$21.820084**. This remains an estimate excluding extraction,
+embeddings and Hermes calls, not a measured bill or hard spend cap. Retain actual
+provider telemetry. Independent protocol review and immutable final preflight
+must clear before paid ingestion. Qualification remains limited to these warmed
+private functional scenarios.
