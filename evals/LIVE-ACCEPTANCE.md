@@ -548,7 +548,7 @@ confirmation or actual-agent calls ran in phase 7.
 
 The new private backend candidate adds prospective extraction cleanup under the
 existing framed single-user admission. Core source
-`2421206cce5da92c73e99eac32e85f5d184c56cb` includes the merge of current main
+`d6ddab077ed16e939fbec3b98d16fdadcb64f420` includes the merge of current main
 `800f601`; the newer subject/name-capture features remain disabled in the private
 runtime. The earlier 37c3276 build was interrupted after discovering the PR
 merge conflict and is not validation evidence. Guidance separates user propositions from
@@ -584,6 +584,15 @@ the successor test/source SHA; do not call it a successor runtime rebuild.
 Copy and verify the exact successor test source before every qualifying test,
 force test recompilation, and require successor CI. Prior cached test results
 do not qualify the successor.
+
+The clean hosted run of `2421206` exposed an independent runner migration:
+Ubuntu 26.04 fails compiling the pinned RocksDB headers before Rust validation.
+The final successor pins Linux CI to the previously passing Ubuntu 24.04;
+runtime and test code are unchanged. Retain the failed run and require final
+successor CI. The private Mnestic checkout also carries a formatting-only patch
+over `272c7b7`; freeze that patch and every affected file hash in the manifest,
+with independent semantic-equivalence review. Hosted CI uses the clean tagged
+engine. Neither difference grants a waiver of the tests or live gates.
 
 Use the unchanged phase-7 scorer, fixtures, six scenarios, expected answers,
 models, recall defaults, capture/job/mirror/latency gates and source collection.
