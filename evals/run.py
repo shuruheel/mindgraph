@@ -80,7 +80,7 @@ def _historical_budget_rejection(assertion: str, code: str, stale: str) -> bool:
     project, amount = re.escape(code), rf"\$?{re.escape(stale)}"
     # A noun label may name the old figure. An active/current claim in the
     # label would conflict with the historical summary and is not exempt.
-    noun_label = rf"{project} pilot (?:approved )?budget(?: (?:of )?{amount})?"
+    noun_label = rf"{project} pilot (?:approved )?budget(?: (?:of )?{amount})?(?: \(superseded\))?"
     if not re.fullmatch(noun_label, " ".join(label.split()), re.IGNORECASE):
         return False
     budget = rf"(?:approved )?budget for (?:the )?{project} pilot"
@@ -93,7 +93,9 @@ def _historical_budget_rejection(assertion: str, code: str, stale: str) -> bool:
                  r"was (?:wrong|incorrect|an error)")
     # Complete matching prevents a cue in a question, negation, another
     # subject/field, metadata, or a trailing current claim from qualifying.
-    return re.fullmatch(rf"(?:{first})(?:;|\.) {subject} (?:{rejection})\.?",
+    historical = rf"(?:{first})(?:;|\.) {subject} (?:{rejection})(?: and is no longer valid)?"
+    quoted_statement = rf"The approved budget for (?:the )?{project} pilot is {amount} \(user statement, later corrected\)"
+    return re.fullmatch(rf"(?:{historical}|{quoted_statement})\.?",
                         " ".join(summary.split()), re.IGNORECASE) is not None
 
 
@@ -139,7 +141,7 @@ def score(scenario: Scenario, injected: str, code: str,
                 if recalled_items is not None and (not isinstance(uid, str) or not uid):
                     failures.append("historical rejection lacks a source-review UID")
                 historical_rejections.append({"uid": uid, "assertion": item["assertion"],
-                                               "stale": phrase, "rule": "historical-budget-rejection-v1"})
+                                               "stale": phrase, "rule": "historical-budget-rejection-v2"})
             if not (item.get("retired") is True or corrected or historical):
                 failures.append(f"stale shown as current: {phrase!r} in {item['line'].strip()[:120]!r}")
     for phrase in map(fill, scenario.forbid):

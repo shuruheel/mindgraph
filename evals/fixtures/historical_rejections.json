@@ -1,6 +1,6 @@
 {
-  "schema": 1,
-  "scope": "Prospective corrected-fact scorer calibration; phase6 a4a07a remains failed",
+  "schema": 2,
+  "scope": "Prospective phase9 scorer calibration; all prior failed scores and source verdicts remain unchanged",
   "cases": [
     {
       "name": "saved_a4a07a_history",
@@ -143,6 +143,204 @@
       "summary": "At an earlier point, the {code} pilot budget was recorded as $8,000, subsequently corrected.",
       "expected_pass": false,
       "expected_history": false
+    },
+    {
+      "name": "phase8_observation_history",
+      "label": "{code} pilot approved budget $8,000 (superseded)",
+      "summary": "The approved budget for the {code} pilot was initially stated as $8,000; this figure was later corrected and is no longer valid",
+      "expected_pass": true,
+      "expected_history": true
+    },
+    {
+      "name": "phase8_parenthetical_claim_history",
+      "label": "{code} pilot approved budget $8,000",
+      "summary": "The approved budget for the {code} pilot is $8,000 (user statement, later corrected).",
+      "expected_pass": true,
+      "expected_history": true
+    },
+    {
+      "name": "superseded_label_without_rejection",
+      "label": "{code} pilot approved budget $8,000 (superseded)",
+      "summary": "The approved budget for the {code} pilot is $8,000",
+      "expected_pass": false,
+      "expected_history": false
+    },
+    {
+      "name": "superseded_label_bare_past",
+      "label": "{code} pilot approved budget $8,000 (superseded)",
+      "summary": "The approved budget for the {code} pilot was $8,000",
+      "expected_pass": false,
+      "expected_history": false
+    },
+    {
+      "name": "invalidity_suffix_alone",
+      "label": "{code} pilot approved budget $8,000",
+      "summary": "The approved budget for the {code} pilot was initially stated as $8,000; this figure is no longer valid",
+      "expected_pass": false,
+      "expected_history": false
+    },
+    {
+      "name": "negated_v2",
+      "label": "{code} pilot approved budget $8,000 (superseded)",
+      "summary": "The approved budget for the {code} pilot was initially stated as $8,000; this figure was not later corrected and is no longer valid",
+      "expected_pass": false,
+      "expected_history": false
+    },
+    {
+      "name": "hypothetical_v2",
+      "label": "{code} pilot approved budget $8,000 (superseded)",
+      "summary": "The approved budget for the {code} pilot was initially stated as $8,000; this figure might be later corrected and is no longer valid",
+      "expected_pass": false,
+      "expected_history": false
+    },
+    {
+      "name": "still_valid_v2",
+      "label": "{code} pilot approved budget $8,000 (superseded)",
+      "summary": "The approved budget for the {code} pilot was initially stated as $8,000; this figure was later corrected and is still valid",
+      "expected_pass": false,
+      "expected_history": false
+    },
+    {
+      "name": "question_v2",
+      "label": "{code} pilot approved budget $8,000 (superseded)",
+      "summary": "The approved budget for the {code} pilot was initially stated as $8,000; this figure was later corrected and is no longer valid?",
+      "expected_pass": false,
+      "expected_history": false
+    },
+    {
+      "name": "other_field_v2",
+      "label": "{code} pilot approved budget $8,000 (superseded)",
+      "summary": "The approved budget for the {code} pilot was initially stated as $8,000; the headcount was later corrected and is no longer valid",
+      "expected_pass": false,
+      "expected_history": false
+    },
+    {
+      "name": "trailing_current_v2",
+      "label": "{code} pilot approved budget $8,000 (superseded)",
+      "summary": "The approved budget for the {code} pilot was initially stated as $8,000; this figure was later corrected and is no longer valid; the budget is still $8,000",
+      "expected_pass": false,
+      "expected_history": false
+    },
+    {
+      "name": "parenthetical_confirmed",
+      "label": "{code} pilot approved budget $8,000",
+      "summary": "The approved budget for the {code} pilot is $8,000 (user statement, later confirmed).",
+      "expected_pass": false,
+      "expected_history": false
+    },
+    {
+      "name": "parenthetical_negated",
+      "label": "{code} pilot approved budget $8,000",
+      "summary": "The approved budget for the {code} pilot is $8,000 (user statement, not corrected).",
+      "expected_pass": false,
+      "expected_history": false
+    },
+    {
+      "name": "parenthetical_possibly",
+      "label": "{code} pilot approved budget $8,000",
+      "summary": "The approved budget for the {code} pilot is $8,000 (user statement, possibly corrected).",
+      "expected_pass": false,
+      "expected_history": false
+    },
+    {
+      "name": "parenthetical_question",
+      "label": "{code} pilot approved budget $8,000",
+      "summary": "The approved budget for the {code} pilot is $8,000 (user statement, later corrected)?",
+      "expected_pass": false,
+      "expected_history": false
+    },
+    {
+      "name": "parenthetical_other_statement",
+      "label": "{code} pilot approved budget $8,000",
+      "summary": "The approved budget for the {code} pilot is $8,000 (another statement, later corrected).",
+      "expected_pass": false,
+      "expected_history": false
+    },
+    {
+      "name": "parenthetical_other_amount",
+      "label": "{code} pilot approved budget $8,000",
+      "summary": "The approved budget for the {code} pilot is $8,000 (user statement, later corrected $900).",
+      "expected_pass": false,
+      "expected_history": false
+    },
+    {
+      "name": "parenthetical_other_field",
+      "label": "{code} pilot approved budget $8,000",
+      "summary": "The approved budget for the {code} pilot is $8,000 (user statement, headcount later corrected).",
+      "expected_pass": false,
+      "expected_history": false
+    },
+    {
+      "name": "parenthetical_trailing_current",
+      "label": "{code} pilot approved budget $8,000",
+      "summary": "The approved budget for the {code} pilot is $8,000 (user statement, later corrected). The budget remains $8,000.",
+      "expected_pass": false,
+      "expected_history": false
+    },
+    {
+      "name": "parenthetical_extra_parenthetical",
+      "label": "{code} pilot approved budget $8,000",
+      "summary": "The approved budget for the {code} pilot is $8,000 (user statement, later corrected). (current).",
+      "expected_pass": false,
+      "expected_history": false
+    },
+    {
+      "name": "parenthetical_label_current",
+      "label": "{code} pilot current budget $8,000",
+      "summary": "The approved budget for the {code} pilot is $8,000 (user statement, later corrected).",
+      "expected_pass": false,
+      "expected_history": false
+    },
+    {
+      "name": "history_label_current",
+      "label": "{code} pilot current budget $8,000",
+      "summary": "The approved budget for the {code} pilot was initially stated as $8,000; this figure was later corrected and is no longer valid",
+      "expected_pass": false,
+      "expected_history": false
+    },
+    {
+      "name": "parenthetical_label_active",
+      "label": "{code} pilot approved budget is $8,000",
+      "summary": "The approved budget for the {code} pilot is $8,000 (user statement, later corrected).",
+      "expected_pass": false,
+      "expected_history": false
+    },
+    {
+      "name": "history_label_active",
+      "label": "{code} pilot approved budget is $8,000",
+      "summary": "The approved budget for the {code} pilot was initially stated as $8,000; this figure was later corrected and is no longer valid",
+      "expected_pass": false,
+      "expected_history": false
+    },
+    {
+      "name": "parenthetical_label_extra",
+      "label": "{code} pilot approved budget $8,000 (current)",
+      "summary": "The approved budget for the {code} pilot is $8,000 (user statement, later corrected).",
+      "expected_pass": false,
+      "expected_history": false
+    },
+    {
+      "name": "history_label_extra",
+      "label": "{code} pilot approved budget $8,000 (current)",
+      "summary": "The approved budget for the {code} pilot was initially stated as $8,000; this figure was later corrected and is no longer valid",
+      "expected_pass": false,
+      "expected_history": false
+    },
+    {
+      "name": "parenthetical_metadata_only",
+      "label": "{code} pilot approved budget $8,000",
+      "summary": "The approved budget for the {code} pilot is $8,000",
+      "expected_pass": false,
+      "expected_history": false,
+      "source_title": "The approved budget for the {code} pilot is $8,000 (user statement, later corrected)."
+    },
+    {
+      "name": "parenthetical_missing_replacement",
+      "label": "{code} pilot approved budget $8,000",
+      "summary": "The approved budget for the {code} pilot is $8,000 (user statement, later corrected).",
+      "expected_pass": false,
+      "expected_history": true,
+      "include_current": false
     }
   ]
 }

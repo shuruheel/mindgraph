@@ -212,7 +212,7 @@ def test_historical_rejection_is_separate_from_retirement(case):
     assert bool(histories) is case["expected_history"]
     assert old["retired"] is False
     if histories:
-        assert histories == [{"uid":"history", "assertion":assertion, "stale":"8,000", "rule":"historical-budget-rejection-v1"}]
+        assert histories == [{"uid":"history", "assertion":assertion, "stale":"8,000", "rule":"historical-budget-rejection-v2"}]
 
 
 def test_live_historical_rejection_requires_a_reviewable_uid():

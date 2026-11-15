@@ -623,3 +623,74 @@ embeddings and Hermes calls, not a measured bill or hard spend cap. Retain actua
 provider telemetry. Independent protocol review and immutable final preflight
 must clear before paid ingestion. Qualification remains limited to these warmed
 private functional scenarios.
+
+## Phase 9: preserve mixed correction history after 6e15fe — 2026-11-15
+
+Phase 8 is closed. Development a4b25d passed 6/6 and independent source review;
+confirmation 6e15fe remains **5/6**, with fourteen accepted rows and six clean
+jobs. Its failed independent review found two defects: an explicitly rejected
+historical budget fell outside the frozen scorer grammar, and one whole Claim
+was certified from support for its `content` alone although its summary added
+`(user statement, later corrected)`. The latter is a real certification defect,
+not a scoring exemption. Preserve the reports, certificates, failed review and
+all twenty ledger entries with **93 reviews reserved**. No second confirmation
+or actual-Hermes pair ran. Do not rescore or repair those runs.
+
+The prospective backend guard refuses recognized correction-history wording
+across label, summary and string property values before constructing choices
+and again before certification. It preserves the whole node, source and explicit
+exclusion reason, including zero-pair/single-candidate review evidence. For an
+old Entity, apply the guard only to its selected edit span, and also reject a
+proposed replacement containing history. This conservative negative check is
+not a complete semantic classifier; metadata cues may over-refuse. Whole-assertion
+source support and atomicity remain mandatory. The change does not fix mixed
+nodes' active-looking typed fields or confer an automatic scoring exemption.
+
+Scorer `historical-budget-rejection-v2` extends the prior full-match grammar
+only with a terminal noun-label ` (superseded)`, a rejection suffix
+` and is no longer valid`, and this separate complete summary form:
+`The approved budget for [the] CODE pilot is OLD (user statement, later corrected).`
+The bracketed `the` is optional. A noun label remains required; labels asserting
+a current value, negations, hypotheticals, questions, other subjects/fields,
+arbitrary parentheticals and appended active claims remain failures. Metadata
+alone never supplies history. A separately recalled replacement answer remains
+required. Freeze the 48 positive/adversarial fixture cases before paid work.
+Every exempt UID still requires the exact assertion hash, two complete original
+forward user turns with provenance/hash binding, and independent explicit
+`supported_history=true` and `not_current=true` judgments. Uncertainty fails.
+These are prospective instrument changes; earlier failed scores are immutable.
+
+Freeze exact source, dependency patch, protocol, helpers, built image and runtime
+configuration. Build a new runtime binary for this runtime change; phase-8's
+binary cannot qualify. Cached unchanged dependencies may be reused, but force
+recompilation of changed Rust crates and rerun all focused tests against the
+exact source. Require revision/choice/history regressions, the saved phase-5
+replay, retirement-ownership and attribution tests, strict Clippy/format, fresh
+plugin and real-Hermes host tests, plus private search/context preflight. Full
+exact-candidate hosted CI must pass before final acceptance. Retain the clean
+hosted Mnestic tag versus private formatting-patch provenance distinction.
+No production deployment is authorized by this private qualification.
+
+Run one `phase9-development-1`, then `phase9-confirmation-1` and
+`phase9-confirmation-2`, each 6/6 with independent full source/retirement and
+normalization-audit review before the next reservation, on one immutable
+candidate. Any failed prerequisite, execution, score or source review closes
+this phase. No unchanged rerun, rescoring, substitution or paid diagnostic.
+Only after both fresh confirmations may the unchanged actual-Hermes pair run.
+Its normal two-call path, diagnosed replacement rule, four-call maximum and
+successful-pair terminal stop remain unchanged. Scenarios, facts, models,
+recall defaults, capture/job/mirror/latency gates and collectors are unchanged.
+
+Append a phase-9 ledger extension bound to the failed confirmation diagnosis
+and all prior reservation IDs. Raise cumulative ceilings to **seventeen suites,
+102 suite jobs, 238 suite rows and 115 reviews**: 93 + 18 fresh suite reviews +
+at most 4 agent captures. Never refund failed or unused reservations. Under the
+standing instruction to continue, raise the review-stage planning allowance to
+**$25**: carry $21.820084 and add twelve newly allowed Sol reviews at the same
+planning rate ($3.015672), yielding **$24.835756**. This is not a bill or hard
+spend cap and excludes extraction, embeddings and Hermes calls. Preserve actual
+provider usage. Independent protocol review and immutable preflight must pass
+before paid ingestion. Qualification remains limited to the warmed private
+functional scenarios; cold latency and general extraction correctness remain
+unqualified. The unrelated Concept dedup provenance observed in a4b25d remains
+a separate, explicitly disclosed extraction limitation.
