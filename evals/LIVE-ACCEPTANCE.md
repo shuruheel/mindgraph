@@ -455,3 +455,81 @@ cap; extraction, embeddings and Hermes calls remain excluded. Retain actual
 provider telemetry. Independent protocol review must clear the frozen artifacts
 before paid ingestion. Qualification remains limited to the warmed private
 candidate and these functional scenarios, with no production deployment claim.
+
+## Phase 7: explicit historical rejection after a4a07a — 2026-11-15
+
+Phase 6 is closed. Development 54e4d9 and confirmation ab7983 passed 6/6 and
+independent source review. Confirmation a4a07a remains **5/6**, despite fourteen
+accepted rows and six clean jobs. Its retained Observation explicitly said the
+initial $8,000 figure was superseded by a correction, without repeating $12,500.
+Independent review found valid history; the frozen scorer required retirement
+metadata or the new value in the same assertion. Do not rescore, supersede this
+history, pool the old scores with the new instrument, or reuse a prior run as a
+new confirmation. Preserve all seventeen entries and **75 reserved reviews**.
+No actual-Hermes acceptance calls ran.
+
+This phase changes the evaluation instrument only. The private backend remains
+core `49482433c8de2abfb0f93a15569feb62ee5170b7` and release image digest
+`63bc31e0264867427579636aedaf804d2d0a73943e8f8439c99e1830c14176ad`.
+Plugin runtime behavior, scenarios, expected answers, defaults and model settings
+remain unchanged. Freeze the new plugin/scorer/helper identities before running.
+Reuse exact-backend validation and the full passing CI run 43754502269; require
+new plugin/evaluator tests, real-host checks, observed image/configuration and
+preflight evidence. No backend rebuild or production deployment is part of this
+instrument repair.
+
+The separate `historical-budget-rejection-v1` predicate applies only to the
+corrected-fact scenario. It requires a complete displayed summary naming the
+exact project, pilot-budget attribute and old amount in a past recorded/stated
+clause, followed by a direct rejection of that figure. Only the implemented,
+bounded grammar qualifies; unknown forms retain failure behavior. Noun labels
+may name the old figure, but explicit active/current claims in labels conflict
+and are refused. Negation, questions, hypotheticals, another subject or field,
+trailing active assertions and metadata-only cues do not qualify. The supported
+$12,500 answer must still occur in assertion content independently of history.
+No retirement flag is invented and stored nodes are unchanged.
+
+The twenty positive/adversarial calibration fixtures were frozen before
+implementation at SHA256
+`ee8042bdcce7965f9451bceda99d8b82933da84d9a2229cbd0e3cfcbb579b43d`.
+They include the saved failure, bare initial wording, future/conditional/negated
+corrections, wrong subjects/fields, label conflicts, trailing current assertions,
+metadata-only cues, missing replacement answers and an unrecognized history form.
+Retain the original-scorer failure log and the repaired offline test results as
+calibration evidence, not live qualification or rescoring of a4a07a.
+
+Every exemption records UID, exact displayed assertion, stale phrase and rule.
+An independent assistant source reviewer must explicitly confirm each as supported
+history and not a current assertion; uncertainty fails the review. A model's
+`no_revision` reason alone is insufficient. The review record binds the assertion
+hash to two distinct forward, complete plain-user turns in the captured source.
+The recording helper checks complete exemption coverage, exact UTF-8 quotes,
+role/hash framing, live captured document/chunk membership and ExtractedFrom
+provenance before recording a passed review. Document and source-edge snapshots
+are collected only after scored probes, alongside the existing full retirement
+collection. No additional search/context probes run during the suite.
+
+Run one `phase7-development-1`, then only after 6/6 and a full independent source
+review, `phase7-confirmation-1` and `phase7-confirmation-2` on the same immutable
+candidate. Both must pass the same mechanical and source gates before the
+unchanged real-Hermes seed/new-session pair. A failed input, execution, score or
+source review closes this phase; no rerun, substitution, diagnostic call or
+post-hoc rule change is permitted. Retain all prior capture/job/mirror, latency,
+negative-control and actual-agent requirements. A mechanical pass with historical
+exemptions is provisional until their required source review passes.
+
+Append a phase-7 extension preserving every prior reservation ID and the failed
+confirmation-review hash. Raise cumulative limits to **fourteen suites, 84 suite
+jobs, 196 suite rows and 97 review reservations**: eighteen reviews for three
+fresh suites, plus the unchanged at-most-four agent captures. No refunds or
+resets; the successful agent path still uses two calls and is terminal.
+
+Under the standing instruction to continue this private acceptance work, raise
+the review-stage planning allowance to **$22**. Carry $15.788740 without credit
+and add eighteen newly allowed reservations at the same 75,000-input/4,096-output
+Sol planning rate: $4.523508 additional, **$20.312248 carried estimate**. This is
+not a measured bill or hard token/spend cap; extraction, embedding and Hermes
+calls remain excluded. Record actual provider usage. Independent protocol review
+and final artifact preflight must clear before paid ingestion. Qualification is
+limited to these warmed private recall/retirement scenarios; cold latency,
+general extraction correctness and exhaustive reconciliation remain unqualified.

@@ -41,6 +41,7 @@ class Outcome:
     injected: str = ""
     retrieval_outcome: str = "not_requested"
     recalled_items: list[dict[str, Any]] = field(default_factory=list)
+    historical_rejections: list[dict[str, str]] = field(default_factory=list)
 
 
 def _fixture_item(line: str) -> dict[str, Any]:
@@ -67,6 +68,35 @@ def _fixture_item(line: str) -> dict[str, Any]:
     return {"line": line, "assertion": content, "source_title": "", "retired": retired}
 
 
+def _historical_budget_rejection(assertion: str, code: str, stale: str) -> bool:
+    """Recognize a bounded, explicit rejection of an earlier budget figure.
+
+    This describes the displayed history, not retirement of the node. Unknown
+    forms stay failures. Every live exemption also requires source review.
+    """
+    label, separator, summary = assertion.partition(" — ")
+    if not separator:
+        return False
+    project, amount = re.escape(code), rf"\$?{re.escape(stale)}"
+    # A noun label may name the old figure. An active/current claim in the
+    # label would conflict with the historical summary and is not exempt.
+    noun_label = rf"{project} pilot (?:approved )?budget(?: (?:of )?{amount})?"
+    if not re.fullmatch(noun_label, " ".join(label.split()), re.IGNORECASE):
+        return False
+    budget = rf"(?:approved )?budget for (?:the )?{project} pilot"
+    earlier = r"(?:(?:initially|originally|previously) (?:recorded|stated)|(?:initial|earlier|previous|original)(?: (?:recorded|stated))?)"
+    first = (rf"(?:the )?{earlier} {budget} was {amount}|"
+             rf"(?:the )?{budget} was (?:initially|originally|previously) (?:recorded|stated) as {amount}")
+    subject = r"(?:this|that|the) (?:figure|amount|value|budget)"
+    rejection = (r"(?:was|has been) (?:later |subsequently )?"
+                 r"(?:superseded|corrected|replaced|refuted|retracted|invalidated)(?: by (?:a|the) correction)?|"
+                 r"was (?:wrong|incorrect|an error)")
+    # Complete matching prevents a cue in a question, negation, another
+    # subject/field, metadata, or a trailing current claim from qualifying.
+    return re.fullmatch(rf"(?:{first})(?:;|\.) {subject} (?:{rejection})\.?",
+                        " ".join(summary.split()), re.IGNORECASE) is not None
+
+
 def score(scenario: Scenario, injected: str, code: str,
           recalled_items: Optional[list[dict[str, Any]]] = None) -> Outcome:
     """Score displayed assertions and authoritative status separately.
@@ -79,6 +109,7 @@ def score(scenario: Scenario, injected: str, code: str,
     item_lines = [line for line in lines if line.lstrip().startswith("- [")]
     items = recalled_items if recalled_items is not None else [_fixture_item(line) for line in item_lines]
     failures: list[str] = []
+    historical_rejections: list[dict[str, str]] = []
     if recalled_items is not None and (
         len(items) != len(item_lines) or any(item.get("line") not in item_lines for item in items)
     ):
@@ -100,7 +131,16 @@ def score(scenario: Scenario, injected: str, code: str,
             if phrase.lower() not in content:
                 continue
             corrected = any(want.lower() in content for want in expected)
-            if not (item.get("retired") is True or corrected):
+            historical = (scenario.name == "corrected_fact" and not corrected
+                          and item.get("retired") is not True
+                          and _historical_budget_rejection(item["assertion"], code, phrase))
+            if historical:
+                uid = item.get("uid", "")
+                if recalled_items is not None and (not isinstance(uid, str) or not uid):
+                    failures.append("historical rejection lacks a source-review UID")
+                historical_rejections.append({"uid": uid, "assertion": item["assertion"],
+                                               "stale": phrase, "rule": "historical-budget-rejection-v1"})
+            if not (item.get("retired") is True or corrected or historical):
                 failures.append(f"stale shown as current: {phrase!r} in {item['line'].strip()[:120]!r}")
     for phrase in map(fill, scenario.forbid):
         if phrase.lower() in injected.lower():
@@ -111,6 +151,7 @@ def score(scenario: Scenario, injected: str, code: str,
         scenario=scenario.name, passed=not failures, failures=failures,
         injected_chars=len(injected), injected_items=len(item_lines), irrelevant_items=irrelevant,
         injected=injected, recalled_items=items,
+        historical_rejections=historical_rejections,
     )
 
 
@@ -382,6 +423,8 @@ def render(report: dict[str, Any]) -> str:
             f"{outcome['irrelevant_items']:>8}{outcome['injected_chars']:>7}{outcome['recall_ms']:>9}"
         )
         lines.extend(f"    - {failure}" for failure in outcome["failures"])
+        if outcome.get("historical_rejections"):
+            lines.append(f"    - {len(outcome['historical_rejections'])} historical rejection exemption(s); independent source review required")
     capture, extraction = report["capture"], report["extraction"]
     lines += [
         "",

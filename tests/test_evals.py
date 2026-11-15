@@ -4,7 +4,9 @@ The offline run uses a scripted server, so it measures the harness, not memory."
 
 from __future__ import annotations
 
+import json
 from dataclasses import asdict
+from pathlib import Path
 
 import pytest
 
@@ -185,3 +187,39 @@ def test_empty_recall_after_a_deadline_does_not_pass_deletion(eval_env, monkeypa
     assert report['input_ready']
     assert report['passed'] == 0
     assert report['outcomes'][0]['retrieval_outcome'] == 'timeout'
+
+
+HISTORY_CASES = json.loads((Path(__file__).parents[1] / "evals/fixtures/historical_rejections.json").read_text())["cases"]
+
+
+@pytest.mark.parametrize("case", HISTORY_CASES, ids=lambda case: case["name"])
+def test_historical_rejection_is_separate_from_retirement(case):
+    def fill(value):
+        return value.replace("{code}", CODE)
+    assertion = fill(case["label"] + " — " + case["summary"])
+    old = {"uid": "history", "assertion": assertion, "retired": False,
+           "source_title": fill(case.get("source_title", "")),
+           "line": "- [Observation] " + assertion}
+    if old["source_title"]:
+        old["line"] += " (source: " + old["source_title"] + ")"
+    current_assertion = f"{CODE} pilot budget is $12,500"
+    current = {"uid": "current", "assertion": current_assertion, "retired": False,
+               "source_title": "", "line": "- [Claim] " + current_assertion}
+    items = [current, old] if case.get("include_current", True) else [old]
+    result = score(BY_NAME["corrected_fact"], "\n".join(i["line"] for i in items), CODE, items)
+    assert result.passed is case["expected_pass"]
+    histories = getattr(result, "historical_rejections", [])
+    assert bool(histories) is case["expected_history"]
+    assert old["retired"] is False
+    if histories:
+        assert histories == [{"uid":"history", "assertion":assertion, "stale":"8,000", "rule":"historical-budget-rejection-v1"}]
+
+
+def test_live_historical_rejection_requires_a_reviewable_uid():
+    case = HISTORY_CASES[0]
+    assertion = (case['label'] + ' — ' + case['summary']).replace('{code}', CODE)
+    line = '- [Observation] ' + assertion
+    result = score(BY_NAME['corrected_fact'], line, CODE,
+                   [{'assertion': assertion, 'line': line, 'retired': False}])
+    assert not result.passed
+    assert 'historical rejection lacks a source-review UID' in result.failures

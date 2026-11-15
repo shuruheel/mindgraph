@@ -1,0 +1,148 @@
+{
+  "schema": 1,
+  "scope": "Prospective corrected-fact scorer calibration; phase6 a4a07a remains failed",
+  "cases": [
+    {
+      "name": "saved_a4a07a_history",
+      "label": "{code} pilot approved budget of $8,000",
+      "summary": "Initially recorded approved budget for the {code} pilot was $8,000; this figure was superseded by a correction",
+      "expected_pass": true,
+      "expected_history": true
+    },
+    {
+      "name": "earlier_value_wrong",
+      "label": "{code} pilot budget",
+      "summary": "The earlier recorded budget for the {code} pilot was $8,000; that value was incorrect.",
+      "expected_pass": true,
+      "expected_history": true
+    },
+    {
+      "name": "originally_stated_later_corrected",
+      "label": "{code} pilot approved budget of $8,000",
+      "summary": "The approved budget for the {code} pilot was originally stated as $8,000. This amount was later corrected.",
+      "expected_pass": true,
+      "expected_history": true
+    },
+    {
+      "name": "missing_replacement_answer",
+      "label": "{code} pilot approved budget of $8,000",
+      "summary": "Initially recorded approved budget for the {code} pilot was $8,000; this figure was superseded by a correction",
+      "expected_pass": false,
+      "expected_history": true,
+      "include_current": false
+    },
+    {
+      "name": "bare_initially",
+      "label": "{code} pilot approved budget of $8,000",
+      "summary": "Initially recorded approved budget for the {code} pilot was $8,000",
+      "expected_pass": false,
+      "expected_history": false
+    },
+    {
+      "name": "future_correction",
+      "label": "{code} pilot approved budget of $8,000",
+      "summary": "Initially recorded approved budget for the {code} pilot was $8,000; this figure will be superseded by a correction",
+      "expected_pass": false,
+      "expected_history": false
+    },
+    {
+      "name": "hypothetical_correction",
+      "label": "{code} pilot approved budget of $8,000",
+      "summary": "Initially recorded approved budget for the {code} pilot was $8,000; this figure could be superseded by a correction",
+      "expected_pass": false,
+      "expected_history": false
+    },
+    {
+      "name": "conditional_correction",
+      "label": "{code} pilot approved budget of $8,000",
+      "summary": "Initially recorded approved budget for the {code} pilot was $8,000; if approved, this figure was superseded by a correction",
+      "expected_pass": false,
+      "expected_history": false
+    },
+    {
+      "name": "negated_correction",
+      "label": "{code} pilot approved budget of $8,000",
+      "summary": "Initially recorded approved budget for the {code} pilot was $8,000; this figure was not superseded by a correction",
+      "expected_pass": false,
+      "expected_history": false
+    },
+    {
+      "name": "never_corrected",
+      "label": "{code} pilot approved budget of $8,000",
+      "summary": "Initially recorded approved budget for the {code} pilot was $8,000; this figure was never corrected",
+      "expected_pass": false,
+      "expected_history": false
+    },
+    {
+      "name": "question",
+      "label": "{code} pilot approved budget of $8,000",
+      "summary": "Initially recorded approved budget for the {code} pilot was $8,000; this figure was superseded by a correction?",
+      "expected_pass": false,
+      "expected_history": false
+    },
+    {
+      "name": "different_subject",
+      "label": "{code} pilot approved budget of $8,000",
+      "summary": "Initially recorded approved budget for the {code} pilot was $8,000; the Rival pilot figure was superseded by a correction",
+      "expected_pass": false,
+      "expected_history": false
+    },
+    {
+      "name": "different_field",
+      "label": "{code} pilot approved budget of $8,000",
+      "summary": "Initially recorded approved budget for the {code} pilot was $8,000; the headcount was superseded by a correction",
+      "expected_pass": false,
+      "expected_history": false
+    },
+    {
+      "name": "different_named_project",
+      "label": "{code} pilot approved budget of $8,000",
+      "summary": "Initially recorded approved budget for the Rival pilot was $8,000; this figure was superseded by a correction",
+      "expected_pass": false,
+      "expected_history": false
+    },
+    {
+      "name": "incidental_correction",
+      "label": "{code} pilot approved budget of $8,000",
+      "summary": "The current approved budget for the {code} pilot is $8,000; a correction was discussed.",
+      "expected_pass": false,
+      "expected_history": false
+    },
+    {
+      "name": "trailing_active_assertion",
+      "label": "{code} pilot approved budget of $8,000",
+      "summary": "Initially recorded approved budget for the {code} pilot was $8,000; this figure was superseded by a correction; the budget is still $8,000",
+      "expected_pass": false,
+      "expected_history": false
+    },
+    {
+      "name": "conflicting_current_label",
+      "label": "{code} pilot current budget is $8,000",
+      "summary": "Initially recorded approved budget for the {code} pilot was $8,000; this figure was superseded by a correction",
+      "expected_pass": false,
+      "expected_history": false
+    },
+    {
+      "name": "conflicting_is_label",
+      "label": "{code} pilot budget is $8,000",
+      "summary": "Initially recorded approved budget for the {code} pilot was $8,000; this figure was superseded by a correction",
+      "expected_pass": false,
+      "expected_history": false
+    },
+    {
+      "name": "metadata_only",
+      "label": "{code} pilot approved budget of $8,000",
+      "summary": "The approved budget for the {code} pilot is $8,000",
+      "expected_pass": false,
+      "expected_history": false,
+      "source_title": "Initially recorded approved budget for the {code} pilot was $8,000; this figure was superseded by a correction"
+    },
+    {
+      "name": "unrecognized_history",
+      "label": "{code} pilot approved budget of $8,000",
+      "summary": "At an earlier point, the {code} pilot budget was recorded as $8,000, subsequently corrected.",
+      "expected_pass": false,
+      "expected_history": false
+    }
+  ]
+}
