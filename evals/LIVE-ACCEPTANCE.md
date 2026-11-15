@@ -338,3 +338,63 @@ remain excluded. Retain actual provider telemetry. Independent contract and
 protocol review must clear the artifacts before paid ingestion. Qualification
 remains limited to this warmed private deployment and these functional scenarios;
 search bounds and uneditable aliases preclude exhaustive reconciliation claims.
+
+## Phase 5: sole supersession ownership after e7a96f — 2026-11-15
+
+Phase 4 is closed. Development e7a96f remains mechanically 6/6 with 14 accepted
+rows and six completed jobs, but **failed independent source review**. An
+uncertified ordinary extraction edge pointed from the initial $8,000 assertion
+to the corrected $12,500 assertion, causing recall to mark the correction as
+superseded. Seven newly certified revisions were correct; reviewing only those
+certificates missed the other producer. Preserve the report, failed source
+review, retirement supplement, all 13 ledger entries and all **51 reserved
+reviews**. No phase-4 confirmations or actual-Hermes calls ran.
+
+This continuation qualifies one concrete ownership fix: for enabled, configured,
+fully framed single-user session transcripts, source-backed final review owns
+supersession. Ordinary layer Supersedes output is deferred and legacy collision
+review is skipped in this scope. Other node/provenance writes remain available;
+unsupported or disabled sources retain ordinary behavior. This also narrows
+legacy collision judgments for admitted transcripts. An immutable internal
+admission record binds source membership and fingerprint under the storage
+write fence. Source drift or lost eligibility must fail required review, including
+resume, instead of silently succeeding with a skip. Admission must survive typed
+chunk updates without replacing content or extraction checkpoints. Offline tests
+and independent contract review must clear these properties before deployment.
+
+Freeze the changed core/plugin SHAs, image/configuration, contract and helper
+hashes, hosted checks and private preflight before `phase5-development-1`.
+Only after 6/6 and independent source review may `phase5-confirmation-1`, then
+`phase5-confirmation-2`, run on precisely the same immutable candidate. Both
+must also pass 6/6 and source review before the unchanged actual-Hermes pair.
+Any failed prerequisite, score, execution or source review closes the phase.
+No unchanged rerun, substitution, score change or paid diagnostic is added.
+All six scenarios, model settings, recall defaults, mirror and capture gates,
+source predicates and actual-agent prompts remain unchanged.
+
+Independent review must inspect the **complete recalled context**, every newly
+certified revision, and incoming/outgoing Supersedes edges for every recalled
+item and every node extracted from this run, including uncertified edges and
+their endpoint nodes. Collect these exact-UID records only after all scored
+probes; no extra search/context queries or retrieval warming during the suite.
+Preserve collection failures as failed execution. This evidence expansion does
+not change the scorer or turn its old pass into a source-review pass.
+
+Append a phase-5 ledger extension carrying every prior reservation ID and the
+failed phase-4 source-review hash. Raise cumulative ceilings to **ten suites,
+60 suite jobs, 140 suite rows and 73 review reservations**. The new development
+plus two confirmations reserve 18 reviews; retain the untouched four-agent-call
+allowance (at most four more reviews). No refunds or resets. Enforce terminal
+failure and same-candidate source review before each next reservation. Two agent
+calls remain the normal successful path; the prior diagnosed-replacement rule
+alone permits the other two, and a successful pair is terminal.
+
+Raise the review-stage planning allowance to **$16**. Carry the phase-4 estimate
+of $12.773068 without credit and add six newly allowed reservations at the same
+75,000-input/4,096-output estimate and higher ordinary Sol route rates:
+$1.507836 additional, **$14.280904 carried estimate**. This is not a measured bill
+or hard token/spend cap; extraction, embeddings and Hermes calls remain excluded.
+Retain actual provider telemetry. Independent protocol review must clear the
+frozen artifacts before paid ingestion. Passing qualifies this warmed private
+candidate and these scenarios only; production deployment, general correction
+accuracy and exhaustive alias reconciliation remain outside this acceptance.
