@@ -180,6 +180,33 @@ def test_refused_credential_is_not_a_governance_less_server():
     assert len(server.requests) == 2
 
 
+def test_failed_check_carries_the_servers_code_and_reason():
+    server = Server(
+        response(400, {"error": "governance agent is suspended\nor tombstoned", "code": "invalid_governance_check"})
+    )
+    result = gate(server).check("mindgraph_plan", {"action": "create_task"})
+    assert not result.allowed
+    assert result.message == (
+        "MindGraph governance check failed "
+        "(400; invalid_governance_check: governance agent is suspended or tombstoned)"
+    )
+
+
+@pytest.mark.parametrize("body", ["upstream said no", "[1, 2]", {"error": 7, "code": None}, {"error": "  "}])
+def test_failed_check_without_a_usable_reason_reports_the_status_alone(body):
+    server = Server(response(422, body))
+    result = gate(server).check("mindgraph_capture", {})
+    assert not result.allowed
+    assert result.message == "MindGraph governance check failed (422)"
+
+
+def test_failed_check_bounds_a_long_server_reason():
+    server = Server(response(400, {"error": "x" * 5000}))
+    message = gate(server).check("mindgraph_capture", {}).message
+    assert message.endswith("…)")
+    assert len(message) < 260
+
+
 @pytest.mark.parametrize("duty", ["notify", "redact"])
 def test_fails_closed_on_an_obligation_it_cannot_enforce(duty):
     server = Server(response(200, {"decision": "conditional", "obligations": [{"duty": duty}], "fired_policies": []}))

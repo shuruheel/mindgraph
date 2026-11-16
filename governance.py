@@ -23,6 +23,8 @@ logger = logging.getLogger(__name__)
 
 UNSUPPORTED_LEASE_SECS = 5 * 60
 DEFAULT_RETRY_DELAYS_SECS = (0.15, 0.6)
+# Longest server error text carried into a failed check's message.
+FAILURE_DETAIL_CHARS = 200
 # ``log`` is discharged by the server's synchronous PolicyDecision write and
 # ``require_approval`` by blocking with its durable handle. This adapter has no
 # trusted delivery channel for ``notify``, so any other duty refuses.
@@ -130,6 +132,31 @@ def _unsupported_response(status: int, body: str) -> bool:
     return any(
         marker in lower for marker in ("unknown governance action", "unknown action", "invalid_governance_action")
     )
+
+
+def _failure_detail(body: str) -> str:
+    """The server's own error code and message, bounded to one short line.
+
+    A bare status says a check failed and not why; the server's 400s name the
+    cause (a suspended agent, an unresolved principal, a malformed target).
+    """
+    try:
+        parsed = json.loads(body)
+    except ValueError:
+        return ""
+    if not isinstance(parsed, dict):
+        return ""
+    parts = [
+        " ".join(value.split())
+        for value in (parsed.get("code"), parsed.get("error"))
+        if isinstance(value, str) and value.strip()
+    ]
+    if not parts:
+        return ""
+    detail = ": ".join(parts)
+    if len(detail) > FAILURE_DETAIL_CHARS:
+        detail = detail[: FAILURE_DETAIL_CHARS - 1] + "…"
+    return f"; {detail}"
 
 
 def _transient(status: int) -> bool:
@@ -241,7 +268,10 @@ class GovernanceGate:
                     f"(HTTP {response.status_code}). Use a user-scoped API key, or set "
                     "MINDGRAPH_GOVERNANCE=off to run this provider ungoverned.",
                 )
-            return GateResult(False, f"MindGraph governance check failed ({response.status_code})")
+            return GateResult(
+                False,
+                f"MindGraph governance check failed ({response.status_code}{_failure_detail(body)})",
+            )
 
         self._capability = "supported"
         self._unsupported_logged = False
