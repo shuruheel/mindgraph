@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- `mindgraph_retrieve` `action: "context"` no longer sends `chunk_limit: 0` when `include_chunks` is absent, so a server with `MINDGRAPH_CONTEXT_SOURCE_DEFAULT=on` can add source text to the rendered context (mindgraph-mcp parity). Older servers, and servers with the setting off, read the omission as 0. `include_chunks: false` now sends an explicit 0. Automatic recall and `mindgraph_memory` topic context read JSON and render locally, so they keep `chunk_limit: 0`.
+
 ## 1.2.0 (2026-11-13)
 
 - Required checkpoints reject queue overflow atomically instead of evicting accepted evidence. Migrates the capture schema and repairs stale deduplication records from previously dropped batches.

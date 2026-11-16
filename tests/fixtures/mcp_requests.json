@@ -20,7 +20,6 @@
           "path": "/retrieve/context",
           "body": {
             "query": "Kissinger NATO",
-            "chunk_limit": 0,
             "graph_expansion_limit": 3,
             "graph_max_depth": 2,
             "format": "text",
@@ -45,7 +44,6 @@
           "path": "/retrieve/context",
           "body": {
             "query": "board members",
-            "chunk_limit": 0,
             "as_of": "2024-03-01",
             "retrieval_mode": "exhaustive",
             "graph_expansion_limit": 3,
@@ -71,7 +69,6 @@
           "path": "/retrieve/context",
           "body": {
             "query": "q",
-            "chunk_limit": 0,
             "article_limit": 0,
             "graph_expansion_limit": 3,
             "graph_max_depth": 2
@@ -96,6 +93,29 @@
             "query": "q",
             "node_limit": 4,
             "chunk_limit": 4,
+            "graph_expansion_limit": 3,
+            "graph_max_depth": 2,
+            "format": "text",
+            "max_tokens": 6000
+          }
+        }
+      ]
+    },
+    {
+      "id": "retrieve_context_no_chunks",
+      "tool": "mindgraph_retrieve",
+      "args": {
+        "action": "context",
+        "query": "q",
+        "include_chunks": false
+      },
+      "requests": [
+        {
+          "method": "POST",
+          "path": "/retrieve/context",
+          "body": {
+            "query": "q",
+            "chunk_limit": 0,
             "graph_expansion_limit": 3,
             "graph_max_depth": 2,
             "format": "text",
