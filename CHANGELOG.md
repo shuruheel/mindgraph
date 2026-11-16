@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- A governance check the server rejects now reports the server's error code and reason (one line, at most 200 characters) instead of the bare HTTP status, so a refused tool call says why.
+
 ## 1.2.0 (2026-11-13)
 
 - Required checkpoints reject queue overflow atomically instead of evicting accepted evidence. Migrates the capture schema and repairs stale deduplication records from previously dropped batches.
