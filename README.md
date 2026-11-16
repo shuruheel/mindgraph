@@ -163,6 +163,8 @@ For a persistent remote Hermes environment, see [the private Fly test lab](deplo
 MIT
 
 For live qualification, follow [the acceptance gates](evals/LIVE-ACCEPTANCE.md).
+The [November 16 private qualification](deploy/hermes-lab/ACCEPTANCE-2026-11-16.md)
+records the tested candidate, results and remaining real-host correction limits.
 `MINDGRAPH_RESUME_TASK_UID` selects an explicit active task for the automatic
 open-work brief. Otherwise a configured workspace/project bounds that brief;
 without either setting the backend selects from eligible open work. Automatic

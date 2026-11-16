@@ -1,5 +1,8 @@
 # Broader acceptance progress — 2026-11-14
 
+Historical record. See the [November 16 qualification result](ACCEPTANCE-2026-11-16.md)
+for the later candidate and its remaining limits. The failed runs below remain unchanged.
+
 Status: **not yet accepted**. Candidate
 `8dd05a9ad61f24ed964b60a7df604cbd8f25fee9` is deployed in the private lab;
 [draft PR #11](https://github.com/shuruheel/mindgraph/pull/11) carries the changes.

@@ -1,5 +1,8 @@
 # Initial deployment validation — 2026-11-14 UTC
 
+For the later candidate's broader private qualification, see the
+[November 16 acceptance record](ACCEPTANCE-2026-11-16.md).
+
 This is an operational smoke record, not a comparative memory evaluation.
 The user authorized synthetic writes using the existing benchmark key; its
 organization already contained other data. No credentials are recorded here.
