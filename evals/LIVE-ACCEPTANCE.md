@@ -694,3 +694,66 @@ before paid ingestion. Qualification remains limited to the warmed private
 functional scenarios; cold latency and general extraction correctness remain
 unqualified. The unrelated Concept dedup provenance observed in a4b25d remains
 a separate, explicitly disclosed extraction limitation.
+
+## Phase 10: core integration with main — 2026-11-16
+
+Phase 9 is closed and **passed**: development 639a20 and confirmations 2e4b83 and
+a15c18 each scored 6/6 with independent source review, and the replacement
+actual-Hermes pair passed (record: `deploy/hermes-lab/ACCEPTANCE-2026-11-16.md`).
+The final ledger holds 26 entries (17 suites, 102 jobs, 238 rows, three agent
+invocations including the failed seed) and **114 reserved reviews**; ledger file
+SHA-256 `33f54d140b6c212912b4b2a0ca1e576b69a64c70d687b5fd051f52d988f6ad0e`,
+entries hash `3dddd3d09931f151c96c31d1728c4f29a4bb7e7159cf4454b00d4a4adcc93ce2`.
+Nothing is refunded, reset or rescored.
+
+Phase 9 qualified core `60a62d2`, which no longer merges with current main. This
+phase requalifies one changed backend candidate and changes nothing else:
+
+- Core `629e4d3c92e4cbcfebcf09dea9c1f89a0d850d09` on `fix/transcript-revision-review`:
+  the phase-9 core plus `fe300fb` (opt-in attributed-author bindings, which stay
+  unconfigured here) and two merges of main through `86080cc`. The revision
+  review's model calls now use the per-stage extraction telemetry and the opt-in
+  usage ledger (kind `transcript_revision`). Full hosted CI run 43899054036 passed.
+- Cloud `facc6f8e68046df4040457aa75c4837f8ac8cf9d`; Mnestic
+  `c3571877fff959e7dc0556022c2d1298638e9e2f` built from a clean archive. Phase 9's
+  formatting-only Mnestic patch was a working-tree difference, not a build
+  requirement, and is not applied.
+- Unchanged: plugin `716f9d808239558c46108dfd242116ffcd4fbd2e`, Hermes
+  `ae1ff71c39d8527227400c8e71acf9c57a8a59c6`, the six scenarios, scorer
+  `historical-budget-rejection-v2` and its frozen fixtures, recall defaults, model
+  routing, actual-agent prompts and limits, and the private machine's runtime
+  environment. Only the image changes. Newly introduced settings
+  (`MINDGRAPH_TRANSCRIPT_AUTHOR_BINDINGS`, `MINDGRAPH_CONTEXT_SOURCE_DEFAULT`,
+  `MINDGRAPH_REINDEX_SEARCH_ORGS`, the usage ledger) stay unset and are verified
+  unset in the running machine.
+
+Because the plugin is unchanged, its image carries the phase-9 copy of this file.
+The phase-10 copy is uploaded to `/data/acceptance-artifacts/phase10-629e4d3/` and
+the budget helper pins its SHA-256. Freeze the image digest, running binary hash,
+configuration, helper hashes, focused exact-source tests (revision and history
+tests, saved phase-5 replay, retirement ownership, attribution) and private
+search/context preflight before paid ingestion. Independent protocol and contract
+review must clear these before `phase10-development-1`.
+
+Run `phase10-development-1`, then `phase10-confirmation-1` and
+`phase10-confirmation-2`, each 6/6 with independent full source, retirement and
+normalization-audit review before the next reservation, on one immutable
+candidate. Any failed prerequisite, execution, score or source review closes
+the phase. No unchanged rerun, rescoring, substitution or paid diagnostic is
+allowed. Only after both confirmations may the unchanged actual-Hermes pair run.
+This phase has its own four-invocation agent allowance; the two-call path is
+normal, the diagnosed-replacement rule permits the other two, and a successful
+pair is terminal. The phase-9 retry diagnosis is not reused. Author-attributed
+Hermes turns are expected to report `skipped_unsupported_source_or_identity`;
+that is the known open identity item, not a phase-10 failure.
+
+Append a phase-10 ledger extension bound to all 26 prior reservation IDs. Raise
+cumulative ceilings to **twenty suites, 120 suite jobs, 280 suite rows and 136
+reviews** (114 + 18 suite reviews + at most four agent captures). Raise the
+review-stage planning allowance to **$31**: carry $24.835756 and add 21 newly
+allowed Sol reviews at the same planning rate (75,000 input plus 4,096 output
+tokens at $2.75/M and $11/M), $5.277426, for **$30.113182**. This is not a bill
+or hard spend cap and excludes extraction, embeddings, Hermes calls and hosting.
+Preserve actual provider usage. Qualification remains limited to the warmed
+private functional scenarios on this candidate; production rollout, cold latency
+and general extraction correctness remain unqualified.
