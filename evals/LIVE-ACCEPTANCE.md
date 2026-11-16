@@ -757,3 +757,86 @@ or hard spend cap and excludes extraction, embeddings, Hermes calls and hosting.
 Preserve actual provider usage. Qualification remains limited to the warmed
 private functional scenarios on this candidate; production rollout, cold latency
 and general extraction correctness remain unqualified.
+
+## Phase 11: history-wording scorer amendment after 3ce76b — 2026-11-16
+
+Phase 10 is closed at **5/6** and is not rescored. In development `3ce76b`, the
+corrected-fact probe recalled a Claim whose complete displayed assertion was
+`{code} pilot approved budget (superseded) — The approved budget for the {code}
+pilot was initially stated as $8,000, a figure later corrected by the user.` The
+independent failure review (SHA-256
+`9b879b4e6daa989aff6085464897d7bf6f3444f0ce638a20dfc86dbc88f6135b`) found it
+to be supported history, not current, and outside the frozen
+`historical-budget-rejection-v2` grammar. It found no reconciliation defect in
+the scored item. The phase-10 ledger entry stays `failed_acceptance` with that
+review. Ledger file SHA-256 after phase 10:
+`d5f34e95533fca218a5257efed906d3270c27b0f7a14faf12a2f1bc50ecb571f` (27 entries,
+18 suites, 108 jobs, 252 rows, 120 reserved reviews).
+
+The owner ruled that the scorer should accept this history wording. This phase
+changes the evaluation instrument only. Scorer `historical-budget-rejection-v3`
+keeps every v2 form and the v2 noun-label rule, and adds exactly two complete
+summary forms:
+
+- an appositive tied to the stale figure: `<v2 first clause naming OLD>, a
+  figure|value|amount [later|subsequently] corrected|superseded|replaced|retracted
+  [by the user|by a correction|by the user's correction]`;
+- a past value bounded by the correction: `[The] [approved] budget for [the] CODE
+  pilot was OLD before the|a|the user's correction`.
+
+"Previously X, corrected to Y" already passes as before, because the assertion
+contains the replacement answer. A bare stale value still fails. So do: a stale
+value only beside the new one in another item; other verbs such as "(later
+revised)"; questioned, hedged or negated wording ("corrected?", "possibly
+corrected", "not corrected"); a present-tense first clause; and any trailing
+clause. The whole summary must match. Structured server status alone governs
+retirement. Annotations, metadata and source titles still cannot supply expected
+or stale phrases. The replacement answer must still be recalled separately.
+Every exempt UID still needs the independent per-UID source-review proof with
+two complete forward plain-user turns.
+
+The calibration fixtures gain fourteen cases (62 total). They include:
+- **Must count as history:** the exact `3ce76b` assertion.
+- **Must fail:**
+  - the same assertion with no replacement answer recalled;
+  - the same assertion beside a separately recalled current `$8,000` Claim;
+  - a bare $8,000;
+  - "$8,000 (later revised)";
+  - "$8,000; corrected?";
+  - hedged, negated, present-tense, trailing-current and questioned
+    appositives.
+
+Frozen fixture SHA-256:
+`5baa62a0a7431a6f47336d0ecbbe12b50851cfe9887b9221b7e93eacb200b633`. The plugin
+candidate is the commit that adds this section and the v3 scorer. It is installed
+on the lab image by build argument; no other plugin runtime code changes. A fresh
+independent reviewer must confirm, from the code and fixtures alone, that v3
+still catches a stale figure recalled as current and is no broader than these
+forms. That review must happen before any paid run.
+
+The backend is unchanged: the deployed phase-10 image
+`hermes-integration-629e4d3@sha256:3c8ffa0c20d3a5f468af8ad8cf75a3d9ac48a37dc33a3d98f31ca20fac25e9f5`
+on core `629e4d3`, with the same configuration and no rebuild. Re-verify its
+identity, the running binary hash and a read-only preflight before the first
+reservation. Scenarios, models, recall defaults, capture/job/mirror/latency
+gates, collectors and actual-agent prompts are unchanged.
+
+Run `phase11-development-1`, then `phase11-confirmation-1` and
+`phase11-confirmation-2` on one immutable candidate. Each must score 6/6 with
+independent full source, retirement, exemption and normalization review before
+the next reservation. Only after both confirmations may the unchanged
+actual-Hermes pair run, under its own four-invocation allowance (two calls on the
+normal path; the diagnosed-replacement rule permits the other two; a successful
+pair is terminal). Any failed prerequisite, execution, score or source review
+closes this phase. No rerun, rescoring, substitution, paid diagnostic or further
+scorer change is permitted within it.
+
+Append a phase-11 ledger extension bound to all 27 prior reservation IDs and the
+phase-10 failure-review hash. Raise cumulative ceilings to **21 suites, 126
+suite jobs, 294 suite rows and 142 reviews** (120 + 18 suite reviews + at most
+four agent captures). No refund of phase 10's unused reservations. Raise the
+review-stage planning allowance to **$32**: carry $30.113182 and add six newly
+allowed Sol reviews at the same planning rate ($1.507836), for **$31.621018**.
+This is not a bill or hard spend cap and excludes extraction, embeddings, Hermes
+calls and hosting. Qualification remains limited to the warmed private
+functional scenarios on this candidate.

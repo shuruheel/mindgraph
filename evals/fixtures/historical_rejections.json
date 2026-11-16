@@ -1,6 +1,6 @@
 {
-  "schema": 2,
-  "scope": "Prospective phase9 scorer calibration; all prior failed scores and source verdicts remain unchanged",
+  "schema": 3,
+  "scope": "Prospective scorer calibration (phase 9 cases plus phase 11 additions after 3ce76b); all prior failed scores and source verdicts remain unchanged",
   "cases": [
     {
       "name": "saved_a4a07a_history",
@@ -341,6 +341,106 @@
       "expected_pass": false,
       "expected_history": true,
       "include_current": false
+    },
+    {
+      "name": "saved_3ce76b_history",
+      "label": "{code} pilot approved budget (superseded)",
+      "summary": "The approved budget for the {code} pilot was initially stated as $8,000, a figure later corrected by the user.",
+      "expected_pass": true,
+      "expected_history": true
+    },
+    {
+      "name": "appositive_figure_superseded",
+      "label": "{code} pilot approved budget",
+      "summary": "The approved budget for the {code} pilot was originally recorded as $8,000, a value subsequently superseded.",
+      "expected_pass": true,
+      "expected_history": true
+    },
+    {
+      "name": "before_the_correction",
+      "label": "{code} pilot budget",
+      "summary": "The approved budget for the {code} pilot was $8,000 before the correction.",
+      "expected_pass": true,
+      "expected_history": true
+    },
+    {
+      "name": "bare_value_v3",
+      "label": "{code} pilot approved budget",
+      "summary": "The approved budget for the {code} pilot is $8,000.",
+      "expected_pass": false,
+      "expected_history": false
+    },
+    {
+      "name": "later_revised_v3",
+      "label": "{code} pilot approved budget",
+      "summary": "The approved budget for the {code} pilot was initially stated as $8,000 (later revised).",
+      "expected_pass": false,
+      "expected_history": false
+    },
+    {
+      "name": "corrected_question_v3",
+      "label": "{code} pilot approved budget",
+      "summary": "The approved budget for the {code} pilot was initially stated as $8,000; corrected?",
+      "expected_pass": false,
+      "expected_history": false
+    },
+    {
+      "name": "appositive_question_v3",
+      "label": "{code} pilot approved budget (superseded)",
+      "summary": "The approved budget for the {code} pilot was initially stated as $8,000, a figure later corrected?",
+      "expected_pass": false,
+      "expected_history": false
+    },
+    {
+      "name": "possibly_corrected_v3",
+      "label": "{code} pilot approved budget (superseded)",
+      "summary": "The approved budget for the {code} pilot was initially stated as $8,000, a figure possibly corrected by the user.",
+      "expected_pass": false,
+      "expected_history": false
+    },
+    {
+      "name": "appositive_not_corrected_v3",
+      "label": "{code} pilot approved budget (superseded)",
+      "summary": "The approved budget for the {code} pilot was initially stated as $8,000, a figure not corrected by the user.",
+      "expected_pass": false,
+      "expected_history": false
+    },
+    {
+      "name": "appositive_trailing_current_v3",
+      "label": "{code} pilot approved budget (superseded)",
+      "summary": "The approved budget for the {code} pilot was initially stated as $8,000, a figure later corrected by the user, and it remains $8,000.",
+      "expected_pass": false,
+      "expected_history": false
+    },
+    {
+      "name": "appositive_current_tense_v3",
+      "label": "{code} pilot approved budget (superseded)",
+      "summary": "The approved budget for the {code} pilot is $8,000, a figure later corrected by the user.",
+      "expected_pass": false,
+      "expected_history": false
+    },
+    {
+      "name": "before_correction_negated_v3",
+      "label": "{code} pilot budget",
+      "summary": "The approved budget for the {code} pilot was $8,000 before no correction.",
+      "expected_pass": false,
+      "expected_history": false
+    },
+    {
+      "name": "saved_3ce76b_missing_new_value",
+      "label": "{code} pilot approved budget (superseded)",
+      "summary": "The approved budget for the {code} pilot was initially stated as $8,000, a figure later corrected by the user.",
+      "expected_pass": false,
+      "expected_history": true,
+      "include_current": false
+    },
+    {
+      "name": "saved_3ce76b_with_stale_current",
+      "label": "{code} pilot approved budget (superseded)",
+      "summary": "The approved budget for the {code} pilot was initially stated as $8,000, a figure later corrected by the user.",
+      "expected_pass": false,
+      "expected_history": true,
+      "stale_current": true
     }
   ]
 }

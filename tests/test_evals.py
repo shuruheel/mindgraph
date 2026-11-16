@@ -206,13 +206,17 @@ def test_historical_rejection_is_separate_from_retirement(case):
     current = {"uid": "current", "assertion": current_assertion, "retired": False,
                "source_title": "", "line": "- [Claim] " + current_assertion}
     items = [current, old] if case.get("include_current", True) else [old]
+    if case.get("stale_current"):
+        stale_assertion = f"{CODE} pilot budget is $8,000"
+        items.append({"uid": "stale", "assertion": stale_assertion, "retired": False,
+                      "source_title": "", "line": "- [Claim] " + stale_assertion})
     result = score(BY_NAME["corrected_fact"], "\n".join(i["line"] for i in items), CODE, items)
     assert result.passed is case["expected_pass"]
     histories = getattr(result, "historical_rejections", [])
     assert bool(histories) is case["expected_history"]
     assert old["retired"] is False
     if histories:
-        assert histories == [{"uid":"history", "assertion":assertion, "stale":"8,000", "rule":"historical-budget-rejection-v2"}]
+        assert histories == [{"uid":"history", "assertion":assertion, "stale":"8,000", "rule":"historical-budget-rejection-v3"}]
 
 
 def test_live_historical_rejection_requires_a_reviewable_uid():

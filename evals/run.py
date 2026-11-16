@@ -68,6 +68,9 @@ def _fixture_item(line: str) -> dict[str, Any]:
     return {"line": line, "assertion": content, "source_title": "", "retired": retired}
 
 
+HISTORY_RULE = "historical-budget-rejection-v3"
+
+
 def _historical_budget_rejection(assertion: str, code: str, stale: str) -> bool:
     """Recognize a bounded, explicit rejection of an earlier budget figure.
 
@@ -94,8 +97,15 @@ def _historical_budget_rejection(assertion: str, code: str, stale: str) -> bool:
     # Complete matching prevents a cue in a question, negation, another
     # subject/field, metadata, or a trailing current claim from qualifying.
     historical = rf"(?:{first})(?:;|\.) {subject} (?:{rejection})(?: and is no longer valid)?"
+    # Phase 11 (owner ruling after 3ce76b): two more explicit history forms.
+    # An appositive marking the stale figure itself as corrected, and a past
+    # value bounded by the correction. Hedged or questioned wording, other
+    # verbs ("revised") and trailing clauses still fail the complete match.
+    appositive = (rf"(?:{first}), a (?:figure|value|amount) (?:later |subsequently )?"
+                  r"(?:corrected|superseded|replaced|retracted)(?: by (?:the user|a correction|the user's correction))?")
+    before_correction = rf"(?:the )?{budget} was {amount} before (?:the|a|the user's) correction"
     quoted_statement = rf"The approved budget for (?:the )?{project} pilot is {amount} \(user statement, later corrected\)"
-    return re.fullmatch(rf"(?:{historical}|{quoted_statement})\.?",
+    return re.fullmatch(rf"(?:{historical}|{appositive}|{before_correction}|{quoted_statement})\.?",
                         " ".join(summary.split()), re.IGNORECASE) is not None
 
 
@@ -141,7 +151,7 @@ def score(scenario: Scenario, injected: str, code: str,
                 if recalled_items is not None and (not isinstance(uid, str) or not uid):
                     failures.append("historical rejection lacks a source-review UID")
                 historical_rejections.append({"uid": uid, "assertion": item["assertion"],
-                                               "stale": phrase, "rule": "historical-budget-rejection-v2"})
+                                               "stale": phrase, "rule": HISTORY_RULE})
             if not (item.get("retired") is True or corrected or historical):
                 failures.append(f"stale shown as current: {phrase!r} in {item['line'].strip()[:120]!r}")
     for phrase in map(fill, scenario.forbid):
