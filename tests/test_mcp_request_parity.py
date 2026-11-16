@@ -81,7 +81,13 @@ def _replay(case: dict[str, Any]) -> list[dict[str, Any]]:
 
 def test_fixtures_cover_the_canonical_calls():
     ids = {case["id"] for case in FIXTURES["cases"]}
-    assert {"retrieve_context_default", "retrieve_context_as_of_exhaustive", "retrieve_context_json"} <= ids
+    assert {
+        "retrieve_context_default",
+        "retrieve_context_as_of_exhaustive",
+        "retrieve_context_json",
+        "retrieve_context_chunks",
+        "retrieve_context_no_chunks",
+    } <= ids
     assert all(case["requests"] for case in FIXTURES["cases"])
 
 

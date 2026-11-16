@@ -35,7 +35,8 @@ def test_context_gates_chunks_and_defaults_expansion(runtime, fake_client):
     h.handle_retrieve(runtime, {"action": "context", "query": "Kissinger NATO", "format": "json"})
     args, kwargs = only_call(fake_client, "retrieve_context")
     assert args == ("Kissinger NATO",)
-    assert kwargs["chunk_limit"] == 0
+    # RD2: no include_chunks leaves chunk_limit to the server (the SDK drops None).
+    assert kwargs["chunk_limit"] is None
     assert kwargs["graph_expansion_limit"] == 3
     assert kwargs["graph_max_depth"] == 2
     # General profile: the article leg is not dropped by default.
@@ -50,6 +51,11 @@ def test_context_include_chunks_uses_limit(runtime, fake_client):
 def test_context_include_chunks_without_limit_defaults_to_five(runtime, fake_client):
     h.handle_retrieve(runtime, {"action": "context", "query": "q", "include_chunks": True, "format": "json"})
     assert only_call(fake_client, "retrieve_context")[1]["chunk_limit"] == 5
+
+
+def test_context_include_chunks_false_sends_explicit_zero(runtime, fake_client):
+    h.handle_retrieve(runtime, {"action": "context", "query": "q", "include_chunks": False, "limit": 3})
+    assert only_call(fake_client, "retrieve_context")[1]["chunk_limit"] == 0
 
 
 def test_context_forwards_explicit_budgets_and_document_opt_out(runtime, fake_client):

@@ -121,7 +121,12 @@ def handle_retrieve(rt: Runtime, args: dict[str, Any]) -> str:
                 node_limit=limit,
                 node_types=node_types,
                 layer=layer,
-                chunk_limit=(limit if limit is not None else 5) if args.get("include_chunks") else 0,
+                # RD2: no include_chunks leaves source text to the server
+                # (MINDGRAPH_CONTEXT_SOURCE_DEFAULT; None is not sent, and older
+                # servers read an omitted chunk_limit as 0). An explicit choice wins.
+                chunk_limit=None
+                if args.get("include_chunks") is None
+                else (limit if limit is not None else 5) if args.get("include_chunks") else 0,
                 article_limit=article_limit,
                 valid_at=args.get("valid_at"),
                 as_of=args.get("as_of"),
