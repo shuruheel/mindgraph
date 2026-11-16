@@ -808,8 +808,13 @@ The calibration fixtures gain fourteen cases (62 total). They include:
 
 Frozen fixture SHA-256:
 `5baa62a0a7431a6f47336d0ecbbe12b50851cfe9887b9221b7e93eacb200b633`. The plugin
-candidate is the commit that adds this section and the v3 scorer. It is installed
-on the lab image by build argument; no other plugin runtime code changes. A fresh
+candidate is the merge commit that brings current main into this branch after
+the commit adding this section and the v3 scorer. The branch had to merge main
+because hosted plugin CI does not run on a conflicting pull request. Main
+contributes one plugin runtime change, Hermes #13: a refused governance check now
+reports the server's error code and reason instead of the bare HTTP status, and
+nothing else in the runtime changes. The candidate is installed on the lab image
+by build argument. A fresh
 independent reviewer must confirm, from the code and fixtures alone, that v3
 still catches a stale figure recalled as current and is no broader than these
 forms. That review must happen before any paid run.

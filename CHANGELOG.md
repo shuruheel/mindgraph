@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Live-acceptance scorer `historical-budget-rejection-v3` also accepts two explicit budget-history forms ("…, a figure later corrected by the user" and "was OLD before the correction"); hedged, questioned, negated and present-tense forms still fail.
 - Bind captured role spans to the exact transcript hash so embedded role headers cannot impersonate a captured user turn.
 
 - Preserve capture-time provenance across retries without assigning recovered checkpoint text a new statement date; include a persistent profile namespace in versioned ingestion metadata.
@@ -9,6 +10,7 @@
 - Keep structured displayed assertions and retirement status for acceptance evidence, preventing source titles and reference labels from supplying answers or retirement markers.
 - Require completed capture/extraction and matching searchable remember/delete receipts in live acceptance; retain failed runs and enforce successful retrieval for negative checks.
 - Scope interrupted-work recall to an explicit task or configured project and use direct automatic retrieval within the existing deadline. Tighten the relevance floor to require multiple matching terms when available.
+- A governance check the server rejects now reports the server's error code and reason (one line, at most 200 characters) instead of the bare HTTP status, so a refused tool call says why.
 
 ## 1.2.0 (2026-11-13)
 
