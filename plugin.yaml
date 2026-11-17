@@ -1,6 +1,6 @@
 manifest_version: 1
 name: mindgraph
-version: 1.2.0
+version: 1.3.0
 description: "MindGraph — typed knowledge-graph memory: bounded per-message recall, session transcript capture, and the mindgraph-mcp general tool surface (capture, reason, commit, plan, retrieve, remember, ingest, synthesize, ontology)."
 author: Shan Rizvi
 requires_hermes: ">=0.22.0"
