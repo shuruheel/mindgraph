@@ -19,6 +19,13 @@ from a new provider instance.
 
 ## Running
 
+The [2026-11-18 recreated-lab report](../deploy/hermes-lab/ACCEPTANCE-2026-11-18.md)
+records two accepted cold readiness observations and a closed actual-Hermes
+stale-preference failure on its pinned integration candidate. It is separate
+from this six-scenario harness and from released plugin 1.3.0. Its
+[frozen protocol](RECREATED-LAB-PROTOCOL.md) preserves the source, accounting and
+terminal gates; a correct model answer did not override stale recalled context.
+
 ```bash
 # Harness self-test against a scripted stand-in. Proves the runner and the
 # scoring work. It says nothing about memory quality.
