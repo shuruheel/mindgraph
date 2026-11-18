@@ -1,0 +1,17 @@
+# Dedicated capture-only acceptance profile. Normal plugin tools remain available
+# in ordinary profiles; this profile measures automatic recall and capture alone.
+platform_toolsets:
+  cli: []
+memory:
+  provider: mindgraph
+plugins:
+  isolation: in_process
+model:
+  default: gpt-6-luna
+  provider: custom
+  base_url: https://api.openai.com/v1
+  api_mode: codex_responses
+agent:
+  max_turns: 3
+  run_budget_seconds: 90
+  reasoning_effort: none

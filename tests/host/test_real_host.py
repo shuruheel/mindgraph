@@ -610,3 +610,51 @@ def test_builtin_memory_writes_are_mirrored(home, server):
     assert remembered == ["Prefers green tea", "Prefers oolong"]
     assert len(server.bodies("/memory/forget")) == 1
     manager.shutdown_all()
+
+
+def test_capture_only_profile_exposes_no_tools_but_recalls_and_captures(home, server, monkeypatch):
+    """A prompt saying 'no tools' is not a tool-selection policy."""
+    from types import SimpleNamespace
+
+    import hermes_yaml as yaml
+    from agent.memory_manager_tools import inject_memory_provider_tools, memory_provider_tools_exposed
+    from hermes_cli import config as hermes_config
+    from model_tools import get_tool_definitions
+    from tui_gateway.server import _load_enabled_toolsets
+
+    config_text = (REPO_ROOT / "evals" / "capture-only.yaml").read_text()
+    (home / "config.yaml").write_text(config_text)
+    config = yaml.safe_load(config_text)
+    monkeypatch.setattr(hermes_config, "load_config", lambda **kwargs: config)
+    monkeypatch.delenv("HERMES_TUI_TOOLSETS", raising=False)
+    enabled = _load_enabled_toolsets("cli")
+    assert enabled == [], "an empty configured toolset must not become unrestricted"
+    tools = get_tool_definitions(enabled_toolsets=enabled, quiet_mode=True)
+    assert tools == []
+
+    manager, _ = boot(home, session_id="capture-only")
+    try:
+        # A control proves the provider registered its normal tools successfully.
+        ordinary = SimpleNamespace(_memory_manager=manager, tools=[], valid_tool_names=set(),
+                                   enabled_toolsets=None, disabled_toolsets=None)
+        assert inject_memory_provider_tools(ordinary) > 0
+        restricted = SimpleNamespace(_memory_manager=manager, tools=tools, valid_tool_names=set(),
+                                     enabled_toolsets=enabled, disabled_toolsets=None)
+        assert inject_memory_provider_tools(restricted) == 0
+        assert restricted.tools == [] and restricted.valid_tool_names == set()
+        assert not memory_provider_tools_exposed(restricted)
+
+        server.context = graph(node("capture-only-fact", "Voya status reports use five bullets"))
+        prompt = "How should Voya status reports be formatted?"
+        manager.on_turn_start(1, prompt, author_id="uid:10000", author_is_bot=False)
+        assert "five bullets" in manager.prefetch_all(prompt, session_id="capture-only")
+        manager.sync_all(prompt, "Use five bullets.", session_id="capture-only",
+                         turn_author={"id": "uid:10000", "is_bot": False})
+        assert manager.flush_pending(10)
+        manager.on_session_end([])
+    finally:
+        manager.shutdown_all()
+    (body,) = server.ingested()
+    spans = json.loads(body["context"])["turn_framing"]["spans"]
+    assert [span["role"] for span in spans] == ["user", "assistant"]
+    assert queue_counts(home) == {"delivered": 1, "open_parts": 0}
