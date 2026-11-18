@@ -41,7 +41,7 @@ def _answer(query: str, code: str, flawed: bool) -> list[dict[str, Any]]:
     if "cache" in query:
         return [_node("c1", f"{code} session cache: Redis, chosen for per-key expiry")]
     if "flexbox" in query or "css" in query:
-        return [_node("u1", f"{code} launch pricing for flexbox seats in CSS")] if flawed else [
+        return [_node("u1", f"{code} launch pricing for a flexbox child in CSS")] if flawed else [
             _node("u1", f"{code} launch pricing is $49 per seat")
         ]
     if "door" in query:
@@ -64,6 +64,8 @@ def oracle(*, flawed: bool = False) -> Iterator[Any]:
     route = server._route
 
     def routed(method: str, path: str, body: Any) -> tuple[int, Any]:
+        if path == "/memory/forget":
+            return 200, {"uid": "mem-1", "action": "forgotten"}
         if path == "/agent/plan" and isinstance(body, dict):
             if body.get("action") == "create_task":
                 state["task"] = {"uid": "task-1", "label": body.get("label"), "props": {}}

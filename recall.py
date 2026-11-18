@@ -8,8 +8,8 @@ thing, and the same items repeated message after message. Each has a rule here.
 - **Query.** ``/retrieve/context`` OR-joins every query token into its keyword
   leg, so a sentence is reduced to its content terms. A message with too few of
   its own ("why?", "what did we decide?") borrows the previous message's.
-- **Floor.** An item is injected only when it mentions two distinct query terms
-  (one, when the query has one). The server always returns its best matches;
+- **Floor.** An item is injected only when it mentions at least half of the usable
+  query terms and at least two distinct terms (one for a one-term query). The server always returns its best matches;
   the best match for an unrelated message is still unrelated. For a borrowed
   query, one of the message's own terms is enough, so "what about Postgres?"
   finds Postgres and is not outvoted by the topic it moved on from.
@@ -33,7 +33,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from .render import node_display_type, status_tag
+from .render import node_display_type, status_tag, superseded_by
 
 logger = logging.getLogger(__name__)
 
@@ -315,9 +315,11 @@ def relevant(query: RecallQuery, text: str) -> bool:
             return True
         lent = tuple(term for term in query.terms if term not in query.own)
         matched, usable = term_overlap(lent, text)
-        return usable > 0 and matched >= min(2, usable)
+        return usable > 0 and matched >= max(min(2, usable), (usable + 1) // 2)
     matched, usable = term_overlap(query.terms, text)
-    return usable > 0 and matched >= min(2, usable)
+    # Two generic overlaps in a longer question ("child", "center") must not
+    # admit a child-study center for a CSS flexbox question.
+    return usable > 0 and matched >= max(min(2, usable), (usable + 1) // 2)
 
 
 # ── Rendering ──────────────────────────────────────────────────────────────
@@ -329,6 +331,12 @@ class Item:
     line: str
     # uid plus status: a decision that has since been superseded is news.
     identity: str
+    # Exactly the displayed assertion, separate from status/provenance text.
+    assertion: str = ""
+    source_title: str = ""
+    retired: bool = False
+    # A real, server-returned successor that must accompany this older assertion.
+    requires_uid: str = ""
 
 
 def _text(value: Any) -> Optional[str]:
@@ -345,17 +353,25 @@ def _stated(node: dict[str, Any]) -> Optional[str]:
     stated = node.get("stated_at")
     if isinstance(stated, list):
         dates = [d for d in stated if isinstance(d, str) and d]
-        return max(dates)[:10] if dates else None
-    return stated[:10] if isinstance(stated, str) and stated else None
+        return _one_line(max(dates), 32) if dates else None
+    return _one_line(stated, 32) if isinstance(stated, str) and stated else None
 
 
 def select_items(response: Any, query: RecallQuery, *, floor: bool = True) -> list[Item]:
     """Injectable items of a ``/retrieve/context`` response, in the server's
-    order; for a borrowed query, items on the message's own subject first."""
+    order; own-subject items lead, with verified successor nodes before history.
+
+    A successor may inherit relevance only through reciprocal, unambiguous
+    server annotations. Its assertion always comes from its own returned node,
+    never from a supersession label. This uses no additional retrieval request.
+    """
     payload = response if isinstance(response, dict) else {}
     graph = payload.get("graph") if isinstance(payload.get("graph"), dict) else {}
     items: list[Item] = []
     leading: set[str] = set()
+    eligible: set[str] = set()
+    nodes: dict[str, dict[str, Any]] = {}
+    duplicates: set[str] = set()
     for node in graph.get("nodes") or []:
         if not isinstance(node, dict):
             continue
@@ -364,6 +380,12 @@ def select_items(response: Any, query: RecallQuery, *, floor: bool = True) -> li
         label = _text(node.get("label")) or _text(props.get("label")) or _text(props.get("name"))
         if not uid or not label or kind in _INFRA_TYPES:
             continue
+        if node.get("tombstone_at") is not None:
+            continue
+        if uid in nodes:
+            duplicates.add(uid)
+            continue
+        nodes[uid] = node
         summary = (
             _text(node.get("summary")) or _text(props.get("summary")) or _text(props.get("description"))
             or _text(props.get("content"))
@@ -374,12 +396,15 @@ def select_items(response: Any, query: RecallQuery, *, floor: bool = True) -> li
         if not informative and kind == "Entity":
             continue
         subject = f"{label} {informative or ''}"
-        if floor and not relevant(query, subject):
-            continue
+        if not floor or relevant(query, subject):
+            eligible.add(uid)
         status = status_tag(node)
-        line = f"- [{kind}] {_one_line(label, LABEL_MAX)}{status}"
+        assertion = _one_line(label, LABEL_MAX)
+        line = f"- [{kind}] {assertion}{status}"
         if informative:
-            line += f" — {_one_line(informative, SUMMARY_MAX)}"
+            detail = f" — {_one_line(informative, SUMMARY_MAX)}"
+            assertion += detail
+            line += detail
         docs = node.get("source_documents") if isinstance(node.get("source_documents"), list) else []
         source = _text(docs[0].get("title")) if docs and isinstance(docs[0], dict) else None
         provenance = "; ".join(
@@ -392,19 +417,66 @@ def select_items(response: Any, query: RecallQuery, *, floor: bool = True) -> li
         )
         if provenance:
             line += f" ({provenance})"
-        items.append(Item(uid=uid, line=line, identity=f"{uid}{status}"))
+        truth = _text(node.get("truth_status")) or _text(props.get("truth_status"))
+        retired = (superseded_by(node) is not None or truth in ("refuted", "retracted")
+                   or node.get("currently_valid") is False)
+        items.append(Item(uid=uid, line=line, identity=f"{uid}{status}", assertion=assertion,
+                          source_title=_one_line(source, SOURCE_MAX) if source else "", retired=retired))
         if _on_own_subject(query, subject):
             leading.add(uid)
-    # "What about Postgres?" after a Redis discussion: Postgres first.
-    return sorted(items, key=lambda item: item.uid not in leading) if leading else items
+    by_uid = {item.uid: item for item in items}
+    heads: dict[str, str] = {}
+    # Explicit conflicts cannot be resolved merely by preferring one head.
+    conflicted: set[str] = set()
+    for conflict in payload.get("conflicts") or []:
+        if isinstance(conflict, dict):
+            conflicted.update(v for k, v in conflict.items() if k.endswith("_uid") and isinstance(v, str))
+    for uid in eligible - duplicates:
+        old = nodes[uid]
+        marker = old.get("superseded")
+        if not isinstance(marker, dict):
+            continue
+        head_uid = _text(marker.get("head_uid"))
+        if not head_uid or head_uid == uid or marker.get("heads") != [head_uid]:
+            continue
+        head = nodes.get(head_uid)
+        item = by_uid.get(head_uid)
+        if (head is None or item is None or head_uid in duplicates or item.retired
+                or uid in conflicted or head_uid in conflicted
+                or old.get("conflict") or head.get("conflict")
+                or head.get("current") is not True
+                or not isinstance(head.get("supersedes_at_t"), list)
+                or uid not in head["supersedes_at_t"]):
+            continue
+        heads[uid] = head_uid
+    # A relevant historical assertion admits its actual current replacement.
+    # Retain history after it, and avoid five obsolete aliases filling all slots.
+    ordered = sorted(items, key=lambda item: item.uid not in leading) if leading else items
+    result: list[Item] = []
+    seen: set[str] = set()
+    for item in ordered:
+        if item.uid not in eligible:
+            continue
+        head_uid = heads.get(item.uid, "")
+        if head_uid and head_uid not in seen:
+            result.append(by_uid[head_uid])
+            seen.add(head_uid)
+        if item.uid not in seen:
+            result.append(Item(**{**vars(item), "requires_uid": head_uid}))
+            seen.add(item.uid)
+    return result
 
 
 def render_items(items: list[Item], max_chars: int) -> str:
     block = HEADER
+    shown: set[str] = set()
     for item in items:
+        if item.requires_uid and item.requires_uid not in shown:
+            continue
         if len(block) + 1 + len(item.line) > max_chars:
             continue  # one long line must not shut out the shorter ones after it
         block += f"\n{item.line}"
+        shown.add(item.uid)
     return block if block != HEADER else ""
 
 
@@ -417,6 +489,9 @@ class Recalled:
     count: int = 0
     # live | cached | stale (kept recall used past the deadline) | none
     source: str = "none"
+    # Separate successful empty recall from a failed/late request.
+    outcome: str = "not_requested"
+    items: tuple[Item, ...] = ()
 
 
 @dataclass
@@ -470,7 +545,7 @@ class RecallEngine:
         waits past the deadline. ``previous`` is Hermes's record of the
         person's last message; this process's own record is the fallback."""
         if not self.config.enabled:
-            return Recalled()
+            return Recalled(outcome="disabled")
         with self._lock:
             conversation = self._conversation(session)
             query = build_query(message, previous or conversation.last_message)
@@ -480,7 +555,7 @@ class RecallEngine:
             seq = self._seq
             candidates = self._candidates(conversation)
         if query is None:
-            return Recalled()
+            return Recalled(outcome="no_query")
         now = self._clock()
         if kept is not None and kept.key == query.key and now - kept.at <= CACHE_TTL_S:
             cached = self._inject(session, query, kept.response, "cached")
@@ -506,13 +581,13 @@ class RecallEngine:
         if done.wait(self.config.deadline_s):
             if "error" in box:
                 logger.debug("MindGraph recall failed: %s", box["error"])
-                return self._fallback(session, query, kept)
+                return self._fallback(session, query, kept, "error")
             return self._inject(session, query, box["response"], "live")
         logger.info(
             "MindGraph recall passed its %.1fs deadline; the turn proceeds and the answer is kept for the next message",
             self.config.deadline_s,
         )
-        return self._fallback(session, query, kept)
+        return self._fallback(session, query, kept, "timeout")
 
     def _keep(self, session: str, query: RecallQuery, response: Any, seq: int) -> None:
         with self._lock:
@@ -526,24 +601,48 @@ class RecallEngine:
         with self._lock:
             self._conversation(session).retry = query
 
-    def _fallback(self, session: str, query: RecallQuery, kept: Optional[_Kept]) -> Recalled:
+    def _fallback(self, session: str, query: RecallQuery, kept: Optional[_Kept], outcome: str) -> Recalled:
         """The conversation's last recall, when it is recent and shares a term
         with this message. The floor then decides item by item."""
         if kept is None or self._clock() - kept.at > CACHE_TTL_S or not query.terms:
-            return Recalled()
+            return Recalled(outcome=outcome)
         if not set(query.terms) & set(kept.terms):
-            return Recalled()
-        return self._inject(session, query, kept.response, "stale")
+            return Recalled(outcome=outcome)
+        result = self._inject(session, query, kept.response, "stale")
+        result.outcome = outcome
+        return result
 
     def _inject(self, session: str, query: RecallQuery, response: Any, source: str) -> Recalled:
         items = select_items(response, query, floor=self.config.floor)
         with self._lock:
             conversation = self._conversation(session)
-            fresh = [item for item in items if item.identity not in conversation.injected][: self.config.limit]
-            text = render_items(fresh, self.config.max_chars)
-            shown = [item for item in fresh if item.line in text]
+            by_uid = {item.uid: item for item in items}
+            shown: list[Item] = []
+            shown_uids: set[str] = set()
+            chars = len(HEADER)
+            for item in items:
+                if item.identity in conversation.injected or item.uid in shown_uids:
+                    continue
+                additions = []
+                if item.requires_uid and item.requires_uid not in shown_uids:
+                    head = by_uid.get(item.requires_uid)
+                    if head is None:
+                        continue
+                    additions.append(head)
+                additions.append(item)
+                size = sum(1 + len(part.line) for part in additions)
+                # Repeating an already-shown head is justified only if its new
+                # dependent history actually fits with it. Otherwise a one-slot
+                # recall would repeat the head forever without showing anything new.
+                if len(shown) + len(additions) > self.config.limit or chars + size > self.config.max_chars:
+                    continue
+                shown.extend(additions)
+                shown_uids.update(part.uid for part in additions)
+                chars += size
+            text = render_items(shown, self.config.max_chars)
             conversation.injected.update(item.identity for item in shown)
-        return Recalled(text=text, count=len(shown), source=source if shown else "none")
+        return Recalled(text=text, count=len(shown), source=source if shown else "none", outcome="success",
+                        items=tuple(shown))
 
     def after_turn(self, session: str) -> Optional[threading.Thread]:
         """Once a turn completes: retry a recall that failed, so the next

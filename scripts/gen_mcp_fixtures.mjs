@@ -53,6 +53,9 @@ const CASES = [
   ],
   ["retrieve_context_json", "mindgraph_retrieve", { action: "context", query: "q", format: "json", include_documents: false }],
   ["retrieve_context_chunks", "mindgraph_retrieve", { action: "context", query: "q", include_chunks: true, limit: 4 }],
+  ["retrieve_context_no_chunks", "mindgraph_retrieve", { action: "context", query: "q", include_chunks: false }],
+  ["memory_topic_chunks", "mindgraph_memory", { action: "context", mode: "topic", query: "q", include_chunks: true, limit: 4 }],
+  ["memory_topic_no_chunks", "mindgraph_memory", { action: "context", mode: "topic", query: "q", include_chunks: false }],
   ["retrieve_text", "mindgraph_retrieve", { action: "text", query: "NATO", limit: 3, node_types: ["Claim"] }],
   ["retrieve_hybrid", "mindgraph_retrieve", { action: "hybrid", query: "NATO", limit: 5, explain: true }],
   [

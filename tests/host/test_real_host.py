@@ -101,7 +101,7 @@ def test_hermes_loads_the_plugin_and_it_satisfies_the_real_contract(home):
     assert provider.name == "mindgraph" and provider.is_available()
     assert len(manager.get_all_tool_names()) == 11
     assert all(manager.has_tool(name) for name in ("mindgraph_memory", "mindgraph_retrieve", "mindgraph_remember"))
-    assert "orient → answer → preserve" in manager.build_system_prompt()
+    assert "## Orient, answer, preserve" in manager.build_system_prompt()
     assert manager.supports_pre_compress_checkpoint(PRE_COMPRESS_CHECKPOINT_API_VERSION)
     manager.shutdown_all()
 

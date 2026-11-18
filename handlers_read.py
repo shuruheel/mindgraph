@@ -121,7 +121,8 @@ def handle_retrieve(rt: Runtime, args: dict[str, Any]) -> str:
                 node_limit=limit,
                 node_types=node_types,
                 layer=layer,
-                chunk_limit=(limit if limit is not None else 5) if args.get("include_chunks") else 0,
+                chunk_limit=((limit if limit is not None else 5) if args.get("include_chunks") is True
+                             else 0 if args.get("include_chunks") is False else None),
                 article_limit=article_limit,
                 valid_at=args.get("valid_at"),
                 as_of=args.get("as_of"),

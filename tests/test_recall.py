@@ -173,7 +173,7 @@ def test_items_carry_type_status_date_and_source():
     (item,) = select_items(raw, QUERY)
     assert item.line == (
         "- [Decision] Voya pilot budget is $8,000 [SUPERSEDED by Voya pilot budget is $12,500 (2026-11-02)] "
-        "— Agreed with finance for the pilot. (stated 2026-10-12; source: Voya kickoff notes)"
+        "— Agreed with finance for the pilot. (stated 2026-10-12T09:00:00Z; source: Voya kickoff notes)"
     )
 
 
@@ -186,6 +186,23 @@ def test_supersession_is_read_in_both_shapes_the_server_has_used():
     assert status_tag({"superseded": True}) == " [SUPERSEDED]"
     assert status_tag({"conflict": {"with": "d3"}}) == " [CONFLICT: unresolved]"
     assert status_tag({"superseded": False}) == "" and status_tag({}) == ""
+
+
+def test_later_statement_cues_do_not_invent_a_supersession_verdict():
+    from hermes_mindgraph_plugin.render import status_tag
+
+    older = node("old", "Voya pilot budget", "The proposed budget was 3000.",
+                 stated_at=["2026-11-14T10:00:00Z"], later_statements=[{
+                     "uid": "new", "label": "Voya pilot budget is 4200", "stated_at": "2026-11-14T11:00:00Z",
+                 }])
+    (item,) = select_items(response(older), QUERY)
+    assert "LATER STATEMENT: Voya pilot budget is 4200 (2026-11-14T11:00:00Z)" in item.line
+    assert "stated 2026-11-14T10:00:00Z" in item.line
+    assert "SUPERSEDED" not in item.line
+    assert status_tag({"latest_on_subject": True}) == " [LATEST ON THIS SUBJECT]"
+    assert status_tag({"current": True}) == " [CURRENT]"
+    assert status_tag({"later_statements": [None, {}]}) == ""
+    assert len(status_tag({"later_statements": [{"label": "x" * 1000}] * 100})) < 350
 
 
 def test_one_overlong_item_does_not_shut_out_the_shorter_ones_after_it():
@@ -610,3 +627,16 @@ def test_an_undo_lets_the_same_question_recall_again(secrets, tmp_path):
     assert provider.prefetch("What is the Voya pilot budget?", session_id="hermes-sess")
     provider.on_session_switch("hermes-sess", rewound=True)
     assert "Voya pilot budget is $8,000" in provider.prefetch("What is the Voya pilot budget?", session_id="hermes-sess")
+
+
+def test_two_generic_words_do_not_admit_an_off_topic_result_for_a_long_query():
+    query = build_query('How do I vertically center a flexbox child in CSS?')
+    assert not relevant(query, 'Research center focusing on child development')
+    assert relevant(query, 'Vertically center a CSS flexbox child with align-items')
+
+
+def test_explicit_resume_task_and_workspace_scope_reach_the_backend(secrets, tmp_path):
+    secrets.update(MINDGRAPH_RESUME_TASK_UID='active-task')
+    provider, fake = start(tmp_path)
+    provider.prefetch('Continue active project work', session_id='s')
+    assert fake.called('plan')[0][1]['task_uid'] == 'active-task'

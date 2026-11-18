@@ -52,11 +52,12 @@ Subagent, cron and flush contexts never write automatically (the one exception i
 Recall runs before every model call, so it is built around three things a person notices: a turn that waits, context about the wrong thing, and the same items repeated.
 
 - **Query.** The message is reduced to its content terms (`/retrieve/context` matches any query word, so a full sentence dilutes it). A message with no subject of its own, such as "what did we decide?", borrows the previous message's terms. Text in scripts written without word spaces is sent whole.
-- **Relevance floor.** An item is injected only when it mentions two distinct query terms (one, when the query has one), comparing words by stem so "policies" matches "policy". The server always returns its best matches; for an unrelated message those are still unrelated. When terms were borrowed, a match on one of the message's own terms is enough and is listed first, so "what about Postgres?" is answered about Postgres.
+- **Relevance floor.** An item is injected only when it mentions at least half of the usable query terms and at least two distinct terms (one, when the query has one), comparing words by stem so "policies" matches "policy". The server always returns its best matches; for an unrelated message those are still unrelated. When terms were borrowed, a match on one of the message's own terms is enough and is listed first, so "what about Postgres?" is answered about Postgres.
 - **Deadline.** The live call gets `MINDGRAPH_RECALL_DEADLINE_MS`. Past it the turn proceeds, using the conversation's last recall when that is on topic, and the late answer is kept for the next message.
-- **No repeats.** An item already injected in the conversation is not injected again until compression drops it or its status changes.
+- **Current assertions.** When a relevant retired item and its unique current replacement both appear in the server response with reciprocal supersession annotations, recall admits the replacement’s own assertion first. The replacement inherits relevance from that relationship; labels alone cannot supply it. Conflicting, invalid, missing and ambiguous replacements do not receive this treatment.
+- **No repeats.** An item already injected in the conversation is not injected again until compression drops it or its status changes, except that a current replacement accompanies newly shown history when both fit.
 
-Each item is one line: type, label, status (`SUPERSEDED by …`, a non-accepted truth status, outside its validity window), summary, the date it was stated and its source.
+Each item is one line: type, label, status (`SUPERSEDED by …`, a non-accepted truth status, outside its validity window), summary, the timestamp it was stated and its source. Server-provided later-statement references are shown as references; they do not by themselves establish that an earlier fact was superseded.
 
 The floor is lexical, so a question in one language will not match memory written in another; set `MINDGRAPH_RECALL_FLOOR=off` for cross-language use.
 
@@ -81,6 +82,8 @@ A completed turn is written to `$HERMES_HOME/mindgraph/capture.db` (SQLite, mode
 - `/undo` removes every queued, undelivered turn of that conversation. A session generation carried through Hermes's background-call context rejects a delayed pre-undo turn, while a new turn is accepted immediately, even with identical text. Hermes does not say how far an undo went, so all queued turns of that session are discarded; the count is in status. Requests already sent cannot be recalled.
 
 Delivery runs on a thread of the provider's own. `sync_turn` never waits for it, and the boundary hooks wait a few seconds at most, so a slow server delays capture and not Hermes.
+
+Batches retain their original capture time across delayed delivery and retries. Live-turn batches supply that observation as the conversation date; recovered checkpoint text and mixed batches keep their original statement date unknown. The ingestion context carries `memory-capture/v1` metadata with capture time and a stable profile namespace. This namespace identifies the profile, not an authenticated participant; servers must establish speaker identity separately before using it for cross-session revisions.
 
 Up to 20 million characters of undelivered text and author metadata are held. A write that would exceed that capacity is rejected atomically and counted; previously accepted evidence is never evicted. A required checkpoint raises so Hermes retains the uncompressed transcript. Once delivery frees capacity the checkpoint can be retried. `mindgraph_memory` with `action: "status"` reports capacity rejections, queue state, undo discards, delivery receipts, and extraction failures. Historical drops from 1.1.0 remain visible. The database migrates in place. The upgrade rebuilds v1 deduplication ledgers from retained queue text because copied records cannot prove that evidence survived an undo or eviction. This can replay already-delivered rows at the first required checkpoint after upgrading.
 
@@ -132,7 +135,7 @@ The MCP server's generated per-object-type ontology tools are not exposed (Herme
 
 ## Tool compatibility
 
-The general tool schemas and requests track mindgraph-mcp 0.27.0. `mindgraph_remember` previews a forget unless `confirm: true`; `restore` accepts the returned node and edge UIDs. `mindgraph_memory` supports `mode: "brief"` for work, goals, decisions and preferences, with warnings when a section cannot be read. Ingest and synthesis `job_status` support `wait_seconds` (up to 50 seconds of polling; individual network requests retain the SDK timeout). Hermes returns the final result without MCP progress notifications. Workspace repository resolution and generated ontology tools require the local MCP code adapter; pass explicit `scope_uids` in Hermes.
+The general tool schemas and requests track mindgraph-mcp 0.29.0. `mindgraph_remember` previews a forget unless `confirm: true`; `restore` accepts the returned node and edge UIDs. `mindgraph_memory` supports `mode: "brief"` for work, goals, decisions and preferences, with warnings when a section cannot be read. Ingest and synthesis `job_status` support `wait_seconds` (up to 50 seconds of polling; individual network requests retain the SDK timeout). Hermes returns the final result without MCP progress notifications. Workspace repository resolution and local repository-memory `open`/`index` handles require the MCP code adapter and are not advertised in Hermes; pass explicit `scope_uids` for work-state scope. Generated ontology tools remain unavailable. Explicit context tools leave source-text defaults to the server unless `include_chunks` is set; automatic recall still excludes chunks. Topic context uses server-rendered item IDs for its bounded-output accounting, with a local-renderer fallback for older servers. Canonical item counts cover graph nodes and articles; source-passage omissions retain the server’s separate counters. After a character cut, only unambiguous complete item headings count as returned.
 
 ## Development
 
@@ -159,3 +162,17 @@ For a persistent remote Hermes environment, see [the private Fly test lab](deplo
 ## License
 
 MIT
+
+For live qualification, follow [the acceptance gates](evals/LIVE-ACCEPTANCE.md).
+The [November 18 whole-answer qualification](deploy/hermes-lab/WHOLE-ANSWER-ACCEPTANCE-2026-11-18.md)
+records the closed failed candidate and remaining current-assertion retrieval gap.
+The successor-selection fix has offline coverage; it does not retroactively pass that run.
+`MINDGRAPH_RESUME_TASK_UID` selects an explicit active task for the automatic
+open-work brief. Otherwise a configured workspace/project bounds that brief;
+without either setting the backend selects from eligible open work. Automatic
+recall uses direct matches within its existing three-second deadline; explicit
+retrieval tools keep their graph-expansion options.
+
+Capture provenance includes a hash of the exact UTF-8 transcript and byte spans for the actual captured roles. Role-like text inside an assistant or delegated message remains part of that message. This framing supports source checks by compatible backends; it does not authenticate speakers.
+
+If role framing would exceed 60 KB, capture retains the complete transcript and records `turn_span_budget_exceeded`; automatic source-backed revision is unavailable for that batch.

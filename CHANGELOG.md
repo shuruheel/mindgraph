@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Sync released MCP 0.29 instructions through its pure builder. Preserve server-default source text on explicit context tools, accurate canonical topic accounting and the hard character limit; omit repository-local handle actions unavailable in Hermes.
+
+- Keep actual current successor assertions ahead of relevant retired aliases. Require unambiguous reciprocal server annotations; preserve context limits and avoid repeated heads when no new history fits.
+- Tighten recall relevance, scope open-work briefs and use direct retrieval within the existing deadline. Preserve structured assertions, full timestamps and server current/later-statement cues.
+- Complete capture/job/mirror acceptance gates and add conservative, source-bound historical-budget scoring; preserve closed private-run failures.
+
 ## 1.3.0 (2026-11-17)
 
 - A governance check the server rejects now reports the server's error code and reason (one line, at most 200 characters) instead of the bare HTTP status, so a refused tool call says why.

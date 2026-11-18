@@ -206,6 +206,22 @@ def status_tag(node: Rec) -> str:
         tags.append("OUTSIDE ITS VALIDITY WINDOW")
     if node.get("valid_at_time") is False:
         tags.append("NOT VALID AT THE REQUESTED TIME")
+    if node.get("current") is True:
+        tags.append("CURRENT")
+    elif node.get("latest_on_subject") is True:
+        tags.append("LATEST ON THIS SUBJECT")
+    # A restatement is evidence of a later value, not a supersession verdict.
+    # Preserve the server's distinction instead of silently losing the cue.
+    later = node.get("later_statements")
+    if isinstance(later, list):
+        for ref in later[:2]:
+            if not isinstance(ref, dict):
+                continue
+            label = _str(ref.get("label")) or _str(ref.get("uid"))
+            if label:
+                label = " ".join(label.split())[:120]
+                date = _str(ref.get("stated_at"))
+                tags.append(f"LATER STATEMENT: {label}" + (f" ({date[:32]})" if date else ""))
     return f" [{'; '.join(tags)}]" if tags else ""
 
 
@@ -414,7 +430,8 @@ def render_context(response: Any, max_chars: Optional[float] = None) -> Optional
     if isinstance(server_text, str) and server_text:
         budget = render_budget(max_chars)
         if budget is not None and len(server_text) > budget:
-            return f"{server_text[:budget]}\n[truncated to {budget} characters]"
+            marker = f"\n[truncated to {budget} characters]"
+            return server_text[:budget - len(marker)] + marker
         return server_text
     graph = _obj(payload.get("graph")) or {}
     shaped = [n for n in _list(graph.get("nodes")) if _is_node_shaped(n)]

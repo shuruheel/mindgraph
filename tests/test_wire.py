@@ -100,7 +100,7 @@ def test_recall_sends_the_bounded_request_and_injects_relevant_items(provider, s
         "chunk_limit": 0,
         "article_limit": 0,
         "include_graph": True,
-        "graph_expansion_limit": 3,
+        "graph_expansion_limit": 0,
         "graph_max_depth": 2,
     }
 

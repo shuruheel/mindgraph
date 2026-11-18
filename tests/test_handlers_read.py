@@ -35,7 +35,7 @@ def test_context_gates_chunks_and_defaults_expansion(runtime, fake_client):
     h.handle_retrieve(runtime, {"action": "context", "query": "Kissinger NATO", "format": "json"})
     args, kwargs = only_call(fake_client, "retrieve_context")
     assert args == ("Kissinger NATO",)
-    assert kwargs["chunk_limit"] == 0
+    assert kwargs["chunk_limit"] is None
     assert kwargs["graph_expansion_limit"] == 3
     assert kwargs["graph_max_depth"] == 2
     # General profile: the article leg is not dropped by default.
