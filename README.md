@@ -164,9 +164,11 @@ For a persistent remote Hermes environment, see [the private Fly test lab](deplo
 MIT
 
 For live qualification, follow [the acceptance gates](evals/LIVE-ACCEPTANCE.md).
-The [November 18 whole-answer qualification](deploy/hermes-lab/WHOLE-ANSWER-ACCEPTANCE-2026-11-18.md)
-records the closed failed candidate and remaining current-assertion retrieval gap.
-The successor-selection fix has offline coverage; it does not retroactively pass that run.
+The [latest private qualification](deploy/hermes-lab/TRANSPORT-REPRODUCTION-2026-11-18.md)
+records a closed source-review failure: a historical assistant acknowledgment was
+wrongly retired. Broader acceptance remains incomplete. The successor-selection
+fix has offline coverage and has not reached its latest live probe. See the
+[roadmap](ROADMAP.md) for the remaining integration and acceptance work.
 `MINDGRAPH_RESUME_TASK_UID` selects an explicit active task for the automatic
 open-work brief. Otherwise a configured workspace/project bounds that brief;
 without either setting the backend selects from eligible open work. Automatic
