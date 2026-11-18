@@ -157,17 +157,18 @@ The `contract-drift` workflow (weekly, on demand, and on PRs touching the contra
 
 `evals/` is the memory outcome suite: six scripted scenarios (a changed preference, a corrected fact, interrupted work, a decision recalled across conversations, an unrelated message, a deletion) that measure what the next conversation gets back. The `eval` workflow runs it against a real org on demand; see `evals/README.md`.
 
-For a persistent remote Hermes environment, see [the private Fly test lab](deploy/hermes-lab/README.md). It pins Hermes and the released plugin, retains profiles and test evidence on a volume, and provides separate credential-free checks and interactive live sessions.
+For a persistent remote Hermes environment, see [the private Fly test lab](deploy/hermes-lab/README.md). It pins Hermes and plugin source, retains profiles and test evidence on a volume, and provides separate credential-free checks and interactive live sessions.
 
 ## License
 
 MIT
 
 For live qualification, follow [the acceptance gates](evals/LIVE-ACCEPTANCE.md).
-The [latest private qualification](deploy/hermes-lab/TRANSPORT-REPRODUCTION-2026-11-18.md)
-records a closed source-review failure: a historical assistant acknowledgment was
-wrongly retired. Broader acceptance remains incomplete. The successor-selection
-fix has offline coverage and has not reached its latest live probe. See the
+The [latest private qualification](deploy/hermes-lab/FIELD-CORRECTION-ACCEPTANCE-2026-11-18.md)
+records a closed source-review failure in new probe writes. The correction was
+independently supported and fresh-session recall answered correctly, but capture
+attributed new assertions to a question that did not state them. Broader acceptance
+remains incomplete. See the
 [roadmap](ROADMAP.md) for the remaining integration and acceptance work.
 `MINDGRAPH_RESUME_TASK_UID` selects an explicit active task for the automatic
 open-work brief. Otherwise a configured workspace/project bounds that brief;
