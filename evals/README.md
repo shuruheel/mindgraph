@@ -19,6 +19,13 @@ from a new provider instance.
 
 ## Running
 
+The [2026-11-18 recreated-lab report](../deploy/hermes-lab/ACCEPTANCE-2026-11-18.md)
+records two accepted cold readiness observations and a closed actual-Hermes
+stale-preference failure on its pinned integration candidate. It is separate
+from this six-scenario harness and from released plugin 1.3.0. Its
+[frozen protocol](RECREATED-LAB-PROTOCOL.md) preserves the source, accounting and
+terminal gates; a correct model answer did not override stale recalled context.
+
 ```bash
 # Harness self-test against a scripted stand-in. Proves the runner and the
 # scoring work. It says nothing about memory quality.
@@ -66,3 +73,17 @@ where; existing paths are refused to prevent accidental reuse. Keep these
 profiles and raw reports private: a shared graph can return existing user data.
 See [the qualification protocol](LIVE-ACCEPTANCE.md) for candidate identity,
 confirmation runs, budgets and the limits of the resulting acceptance claim.
+
+## Actual CLI capture-only profiles
+
+Use [capture-only.yaml](capture-only.yaml) in a fresh, dedicated Hermes profile
+when measuring automatic recall and transcript capture. Its explicit
+`platform_toolsets.cli: []` removes model-callable tools while keeping the
+MindGraph memory provider active. A prompt saying “Do not use tools” is
+insufficient: an actual correction session invoked memory tools and invalidated
+its capture-only run.
+
+The host tests check both Hermes tool selection and the complete CLI against
+local model/API stand-ins. They require an empty model tool list, recalled
+context in the actual model request, and one captured user/assistant exchange.
+These are integration checks, not live memory-quality evidence.

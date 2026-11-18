@@ -573,6 +573,8 @@ class MindGraphMemoryProvider(MemoryProvider):
         extra = (
             {"idempotency_key": f"hermes:{batch.batch_id}"} if _takes_idempotency_key(rt.client.ingest_session) else {}
         )
+        # Role framing for source-backed revision review; mindgraph-sdk 0.17.0
+        # (the minimum) already takes ``context`` and ``occurred_at``.
         if batch.captured_at:
             extra.update(
                 context=json.dumps({
