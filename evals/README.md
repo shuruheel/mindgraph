@@ -55,3 +55,17 @@ with a fresh codename, so earlier runs in the same org do not answer for it.
 Not measured: whether a model uses the context well (that needs an agent in
 the loop), and dollars (the client cannot see the server's model spend;
 ingested characters and job counts are the proxy).
+
+## Actual CLI capture-only profiles
+
+Use [capture-only.yaml](capture-only.yaml) in a fresh, dedicated Hermes profile
+when measuring automatic recall and transcript capture. Its explicit
+`platform_toolsets.cli: []` removes model-callable tools while keeping the
+MindGraph memory provider active. A prompt saying “Do not use tools” is
+insufficient: an actual correction session invoked memory tools and invalidated
+its capture-only run.
+
+The host tests check both Hermes tool selection and the complete CLI against
+local model/API stand-ins. They require an empty model tool list, recalled
+context in the actual model request, and one captured user/assistant exchange.
+These are integration checks, not live memory-quality evidence.
