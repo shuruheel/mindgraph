@@ -335,6 +335,8 @@ class Item:
     assertion: str = ""
     source_title: str = ""
     retired: bool = False
+    # A real, server-returned successor that must accompany this older assertion.
+    requires_uid: str = ""
 
 
 def _text(value: Any) -> Optional[str]:
@@ -357,11 +359,19 @@ def _stated(node: dict[str, Any]) -> Optional[str]:
 
 def select_items(response: Any, query: RecallQuery, *, floor: bool = True) -> list[Item]:
     """Injectable items of a ``/retrieve/context`` response, in the server's
-    order; for a borrowed query, items on the message's own subject first."""
+    order; own-subject items lead, with verified successor nodes before history.
+
+    A successor may inherit relevance only through reciprocal, unambiguous
+    server annotations. Its assertion always comes from its own returned node,
+    never from a supersession label. This uses no additional retrieval request.
+    """
     payload = response if isinstance(response, dict) else {}
     graph = payload.get("graph") if isinstance(payload.get("graph"), dict) else {}
     items: list[Item] = []
     leading: set[str] = set()
+    eligible: set[str] = set()
+    nodes: dict[str, dict[str, Any]] = {}
+    duplicates: set[str] = set()
     for node in graph.get("nodes") or []:
         if not isinstance(node, dict):
             continue
@@ -370,6 +380,12 @@ def select_items(response: Any, query: RecallQuery, *, floor: bool = True) -> li
         label = _text(node.get("label")) or _text(props.get("label")) or _text(props.get("name"))
         if not uid or not label or kind in _INFRA_TYPES:
             continue
+        if node.get("tombstone_at") is not None:
+            continue
+        if uid in nodes:
+            duplicates.add(uid)
+            continue
+        nodes[uid] = node
         summary = (
             _text(node.get("summary")) or _text(props.get("summary")) or _text(props.get("description"))
             or _text(props.get("content"))
@@ -380,8 +396,8 @@ def select_items(response: Any, query: RecallQuery, *, floor: bool = True) -> li
         if not informative and kind == "Entity":
             continue
         subject = f"{label} {informative or ''}"
-        if floor and not relevant(query, subject):
-            continue
+        if not floor or relevant(query, subject):
+            eligible.add(uid)
         status = status_tag(node)
         assertion = _one_line(label, LABEL_MAX)
         line = f"- [{kind}] {assertion}{status}"
@@ -408,16 +424,59 @@ def select_items(response: Any, query: RecallQuery, *, floor: bool = True) -> li
                           source_title=_one_line(source, SOURCE_MAX) if source else "", retired=retired))
         if _on_own_subject(query, subject):
             leading.add(uid)
-    # "What about Postgres?" after a Redis discussion: Postgres first.
-    return sorted(items, key=lambda item: item.uid not in leading) if leading else items
+    by_uid = {item.uid: item for item in items}
+    heads: dict[str, str] = {}
+    # Explicit conflicts cannot be resolved merely by preferring one head.
+    conflicted: set[str] = set()
+    for conflict in payload.get("conflicts") or []:
+        if isinstance(conflict, dict):
+            conflicted.update(v for k, v in conflict.items() if k.endswith("_uid") and isinstance(v, str))
+    for uid in eligible - duplicates:
+        old = nodes[uid]
+        marker = old.get("superseded")
+        if not isinstance(marker, dict):
+            continue
+        head_uid = _text(marker.get("head_uid"))
+        if not head_uid or head_uid == uid or marker.get("heads") != [head_uid]:
+            continue
+        head = nodes.get(head_uid)
+        item = by_uid.get(head_uid)
+        if (head is None or item is None or head_uid in duplicates or item.retired
+                or uid in conflicted or head_uid in conflicted
+                or old.get("conflict") or head.get("conflict")
+                or head.get("current") is not True
+                or not isinstance(head.get("supersedes_at_t"), list)
+                or uid not in head["supersedes_at_t"]):
+            continue
+        heads[uid] = head_uid
+    # A relevant historical assertion admits its actual current replacement.
+    # Retain history after it, and avoid five obsolete aliases filling all slots.
+    ordered = sorted(items, key=lambda item: item.uid not in leading) if leading else items
+    result: list[Item] = []
+    seen: set[str] = set()
+    for item in ordered:
+        if item.uid not in eligible:
+            continue
+        head_uid = heads.get(item.uid, "")
+        if head_uid and head_uid not in seen:
+            result.append(by_uid[head_uid])
+            seen.add(head_uid)
+        if item.uid not in seen:
+            result.append(Item(**{**vars(item), "requires_uid": head_uid}))
+            seen.add(item.uid)
+    return result
 
 
 def render_items(items: list[Item], max_chars: int) -> str:
     block = HEADER
+    shown: set[str] = set()
     for item in items:
+        if item.requires_uid and item.requires_uid not in shown:
+            continue
         if len(block) + 1 + len(item.line) > max_chars:
             continue  # one long line must not shut out the shorter ones after it
         block += f"\n{item.line}"
+        shown.add(item.uid)
     return block if block != HEADER else ""
 
 
@@ -557,9 +616,30 @@ class RecallEngine:
         items = select_items(response, query, floor=self.config.floor)
         with self._lock:
             conversation = self._conversation(session)
-            fresh = [item for item in items if item.identity not in conversation.injected][: self.config.limit]
-            text = render_items(fresh, self.config.max_chars)
-            shown = [item for item in fresh if item.line in text]
+            by_uid = {item.uid: item for item in items}
+            shown: list[Item] = []
+            shown_uids: set[str] = set()
+            chars = len(HEADER)
+            for item in items:
+                if item.identity in conversation.injected or item.uid in shown_uids:
+                    continue
+                additions = []
+                if item.requires_uid and item.requires_uid not in shown_uids:
+                    head = by_uid.get(item.requires_uid)
+                    if head is None:
+                        continue
+                    additions.append(head)
+                additions.append(item)
+                size = sum(1 + len(part.line) for part in additions)
+                # Repeating an already-shown head is justified only if its new
+                # dependent history actually fits with it. Otherwise a one-slot
+                # recall would repeat the head forever without showing anything new.
+                if len(shown) + len(additions) > self.config.limit or chars + size > self.config.max_chars:
+                    continue
+                shown.extend(additions)
+                shown_uids.update(part.uid for part in additions)
+                chars += size
+            text = render_items(shown, self.config.max_chars)
             conversation.injected.update(item.identity for item in shown)
         return Recalled(text=text, count=len(shown), source=source if shown else "none", outcome="success",
                         items=tuple(shown))

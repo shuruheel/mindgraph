@@ -27,7 +27,7 @@ def test_cli_sends_no_tools_while_provider_recall_and_capture_remain_active(home
     profile = Path(temporary.name) / "home"
     shutil.copytree(home, profile)
     requests = []
-    server.context = graph(node("offline-memory", "VoyaOffline status reports",
+    server.context = graph(node("offline-memory", "Project VoyaOffline reports use five bullets",
                                 "Use the amber notebook.", kind="Preference"))
 
     class Handler(BaseHTTPRequestHandler):

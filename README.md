@@ -54,7 +54,8 @@ Recall runs before every model call, so it is built around three things a person
 - **Query.** The message is reduced to its content terms (`/retrieve/context` matches any query word, so a full sentence dilutes it). A message with no subject of its own, such as "what did we decide?", borrows the previous message's terms. Text in scripts written without word spaces is sent whole.
 - **Relevance floor.** An item is injected only when it mentions at least half of the usable query terms and at least two distinct terms (one, when the query has one), comparing words by stem so "policies" matches "policy". The server always returns its best matches; for an unrelated message those are still unrelated. When terms were borrowed, a match on one of the message's own terms is enough and is listed first, so "what about Postgres?" is answered about Postgres.
 - **Deadline.** The live call gets `MINDGRAPH_RECALL_DEADLINE_MS`. Past it the turn proceeds, using the conversation's last recall when that is on topic, and the late answer is kept for the next message.
-- **No repeats.** An item already injected in the conversation is not injected again until compression drops it or its status changes.
+- **Current assertions.** When a relevant retired item and its unique current replacement both appear in the server response with reciprocal supersession annotations, recall admits the replacement’s own assertion first. The replacement inherits relevance from that relationship; labels alone cannot supply it. Conflicting, invalid, missing and ambiguous replacements do not receive this treatment.
+- **No repeats.** An item already injected in the conversation is not injected again until compression drops it or its status changes, except that a current replacement accompanies newly shown history when both fit.
 
 Each item is one line: type, label, status (`SUPERSEDED by …`, a non-accepted truth status, outside its validity window), summary, the timestamp it was stated and its source. Server-provided later-statement references are shown as references; they do not by themselves establish that an earlier fact was superseded.
 
@@ -163,8 +164,9 @@ For a persistent remote Hermes environment, see [the private Fly test lab](deplo
 MIT
 
 For live qualification, follow [the acceptance gates](evals/LIVE-ACCEPTANCE.md).
-The [November 16 private qualification](deploy/hermes-lab/ACCEPTANCE-2026-11-16.md)
-records the tested candidate, results and remaining real-host correction limits.
+The [November 18 whole-answer qualification](deploy/hermes-lab/WHOLE-ANSWER-ACCEPTANCE-2026-11-18.md)
+records the closed failed candidate and remaining current-assertion retrieval gap.
+The successor-selection fix has offline coverage; it does not retroactively pass that run.
 `MINDGRAPH_RESUME_TASK_UID` selects an explicit active task for the automatic
 open-work brief. Otherwise a configured workspace/project bounds that brief;
 without either setting the backend selects from eligible open work. Automatic

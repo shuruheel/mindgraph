@@ -1,15 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Keep actual current successor assertions ahead of relevant retired aliases. Require unambiguous reciprocal server annotations; preserve context limits and avoid repeated heads when no new history fits.
+- Tighten recall relevance, scope open-work briefs and use direct retrieval within the existing deadline. Preserve structured assertions, full timestamps and server current/later-statement cues.
+- Complete capture/job/mirror acceptance gates and add conservative, source-bound historical-budget scoring; preserve closed private-run failures.
+
 ## 1.3.0 (2026-11-17)
 
-- Live-acceptance scorer `historical-budget-rejection-v3` also accepts two explicit budget-history forms ("…, a figure later corrected by the user" and "was OLD before the correction"); hedged, questioned, negated and present-tense forms still fail.
-- Bind captured role spans to the exact transcript hash so embedded role headers cannot impersonate a captured user turn.
-
-- Preserve capture-time provenance across retries without assigning recovered checkpoint text a new statement date; include a persistent profile namespace in versioned ingestion metadata.
-- Preserve full recall timestamps and server-provided current/later-statement cues. Later statements remain distinct from authoritative supersession.
-- Keep structured displayed assertions and retirement status for acceptance evidence, preventing source titles and reference labels from supplying answers or retirement markers.
-- Require completed capture/extraction and matching searchable remember/delete receipts in live acceptance; retain failed runs and enforce successful retrieval for negative checks.
-- Scope interrupted-work recall to an explicit task or configured project and use direct automatic retrieval within the existing deadline. Tighten the relevance floor to require multiple matching terms when available.
 - A governance check the server rejects now reports the server's error code and reason (one line, at most 200 characters) instead of the bare HTTP status, so a refused tool call says why.
 - Captured transcripts now carry `memory-capture/v1` metadata: hash-bound UTF-8 role spans for each turn, a per-profile actor scope, the capture time, and a statement date only for live turns (never for recovered checkpoint text). The server uses the role spans to review a user's corrections against their own turns; role metadata over 60,000 bytes is marked unavailable instead of truncated.
 
