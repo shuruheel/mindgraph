@@ -88,9 +88,11 @@ local model/API stand-ins. They require an empty model tool list, recalled
 context in the actual model request, and one captured user/assistant exchange.
 These are integration checks, not live memory-quality evidence.
 
-The latest actual-Hermes run follows the [transport reproduction protocol](TRANSPORT-REPRODUCTION-PROTOCOL.md).
-Its [closed result](../deploy/hermes-lab/TRANSPORT-REPRODUCTION-2026-11-18.md) failed
-independent source review despite passing runtime capture gates. The preceding
+The latest actual-Hermes run follows the [field-correction protocol](FIELD-CORRECTION-PROTOCOL.md).
+Its [closed result](../deploy/hermes-lab/FIELD-CORRECTION-ACCEPTANCE-2026-11-18.md)
+passed correction review and fresh-session answer/context gates, but failed the
+probe's new-capture source review. The B sequence did not run. The preceding
+[transport reproduction](../deploy/hermes-lab/TRANSPORT-REPRODUCTION-2026-11-18.md),
 [current-assertion protocol](CURRENT-ASSERTION-ACCEPTANCE-PROTOCOL.md) and
 [transport failure](../deploy/hermes-lab/CURRENT-ASSERTION-ACCEPTANCE-2026-11-18.md)
-remain preserved. Neither run establishes broader acceptance.
+remain preserved. These closed failures do not establish broader acceptance.
