@@ -94,7 +94,7 @@ def test_system_prompt_block_is_static_and_makes_no_calls(secrets):
     provider, fake = make_provider(secrets)
     block = provider.system_prompt_block()
     assert block == provider.system_prompt_block()
-    assert "orient → answer → preserve" in block
+    assert "## Orient, answer, preserve" in block
     assert "mindgraph_code" not in block
     assert fake.calls == []
 

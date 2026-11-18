@@ -90,11 +90,12 @@ def test_topic_context_is_a_stable_hashed_envelope(runtime, fake_client):
     assert kwargs == {
         "project_uid": "project-1",
         "node_limit": 8,
-        "chunk_limit": 0,
         "article_limit": 0,
         "include_graph": True,
         "graph_expansion_limit": 3,
         "graph_max_depth": 2,
+        "format": "text",
+        "max_tokens": 500,
     }
     rendered, envelope = first["result"], first["structured"]
     assert envelope["mode"] == "topic"
@@ -171,3 +172,94 @@ def test_server_errors_keep_code_and_retriable(runtime, fake_client):
     assert result["code"] == "query_timeout"
     assert result["retriable"] is False
     assert result["status"] == 504
+
+
+def test_canonical_topic_uses_rendered_ids_and_server_budget_metadata(runtime, fake_client):
+    raw = {
+        'graph': {'nodes': [
+            {'uid': 'a', 'node_type': 'Claim', 'label': 'Current budget'},
+            {'uid': 'b', 'node_type': 'Claim', 'label': 'Earlier budget', 'superseded': {'head_uid': 'a'}},
+        ], 'edges': [{'from_uid': 'a', 'to_uid': 'b', 'edge_type': 'SUPPORTS'}]},
+        'context_text': 'Claim — Current budget\nClaim — Earlier budget',
+        'rendered': {'nodes': ['a', 'b'], 'articles': [], 'brief_nodes': ['a']},
+        'truncated': True,
+        'omitted': {'nodes': 0, 'brief_nodes': 1},
+    }
+    fake_client.responses['retrieve_context'] = raw
+    result = call(runtime, {'action': 'context', 'mode': 'topic', 'query': 'budget'})
+    assert result['result'] == raw['context_text']
+    trace = result['structured']['retrieval_trace']
+    assert trace['rendering'] == 'server'
+    assert trace['returned_items'] == trace['available_items'] == 2
+    assert trace['omitted_items'] == 0
+    assert trace['server_omitted'] == raw['omitted']
+    assert result['structured']['budget']['bounded'] is True
+    warnings = {w['code']: w['message'] for w in result['structured']['warnings']}
+    assert 'shortened' in warnings['context_bounded']
+    assert 'source_truncated' not in warnings
+    assert 'superseded_items_present' in warnings
+
+
+def test_oversized_canonical_topic_counts_only_remaining_items_and_includes_marker_in_cap(runtime, fake_client):
+    fake_client.responses['retrieve_context'] = {
+        'graph': {'nodes': [{'uid': 'a', 'node_type': 'Claim', 'label': 'First'},
+                            {'uid': 'b', 'node_type': 'Claim', 'label': 'Last'}]},
+        'context_text': 'Claim — First\n' + 'detail ' * 200 + '\nClaim — Last',
+        'rendered': {'nodes': ['a', 'b'], 'articles': []},
+    }
+    result = call(runtime, {'action': 'context', 'mode': 'topic', 'query': 'claims', 'max_output_chars': 512})
+    assert len(result['result']) <= 512
+    assert result['result'].endswith('[truncated to 512 characters]')
+    budget = result['structured']['budget']
+    assert budget['used_chars'] == len(result['result'])
+    assert budget['available_items'] == 2 and budget['returned_items'] == budget['omitted_items'] == 1
+    assert budget['bounded'] is True
+
+
+def test_legacy_topic_without_rendered_ids_ignores_unattributed_text_and_unrequested_chunks(runtime, fake_client):
+    raw = {'graph': {'nodes': [{'uid': 'a', 'node_type': 'Claim', 'label': 'Legacy fact'}]},
+           'context_text': 'unattributed server text', 'used_tokens': 20, 'truncated': True,
+           'omitted': {'nodes': 10},
+           'chunks': [{'chunk_uid': 'c', 'document_title': 'Source', 'content': 'Hidden source passage'}]}
+    fake_client.responses['retrieve_context'] = raw
+    for extra in ({}, {'include_chunks': False}):
+        result = call(runtime, {'action': 'context', 'mode': 'topic', 'query': 'fact', **extra})
+        assert 'Legacy fact' in result['result'] and '[a]' in result['result']
+        assert 'unattributed' not in result['result'] and 'Hidden source passage' not in result['result']
+        assert 'rendering' not in result['structured']['retrieval_trace']
+        assert result['structured']['retrieval_trace']['returned_items'] == 1
+        assert result['structured']['budget']['bounded'] is False
+        assert not any(w['code'] == 'source_truncated' for w in result['structured']['warnings'])
+    result = call(runtime, {'action': 'context', 'mode': 'topic', 'query': 'fact', 'include_chunks': True})
+    assert 'Hidden source passage' in result['result']
+    assert raw['context_text'] == 'unattributed server text', 'fallback must not mutate SDK response'
+
+
+def test_cut_canonical_text_does_not_count_prefix_labels_or_source_prose(runtime, fake_client):
+    fake_client.responses['retrieve_context'] = {
+        'graph': {'nodes': [{'uid': 'a', 'node_type': 'Claim', 'label': 'Budget approved'},
+                            {'uid': 'b', 'node_type': 'Claim', 'label': 'Budget'},
+                            {'uid': 'c', 'node_type': 'Claim', 'label': 'Prose only'}]},
+        'context_text': ('Claim — Budget approved\nA source mentions Claim — Prose only in prose.\n'
+                         + 'detail ' * 200 + '\nClaim — Budget\nClaim — Prose only'),
+        'rendered': {'nodes': ['a', 'b', 'c'], 'articles': []},
+    }
+    result = call(runtime, {'action': 'context', 'mode': 'topic', 'query': 'budget', 'max_output_chars': 512})
+    assert result['structured']['retrieval_trace']['returned_items'] == 1
+    assert result['structured']['retrieval_trace']['omitted_items'] == 2
+
+
+def test_canonical_source_passages_are_outside_explicit_node_article_item_counts(runtime, fake_client):
+    fake_client.responses['retrieve_context'] = {
+        'graph': {'nodes': [{'uid': 'a', 'node_type': 'Claim', 'label': 'Budget'}]},
+        'chunks': [{'chunk_uid': 'source', 'document_title': 'Source', 'content': 'Budget details'}],
+        'context_text': 'Claim — Budget\nSource: Budget details',
+        'rendered': {'nodes': ['a'], 'articles': [], 'chunks': ['source']},
+        'omitted': {'chunks': 0, 'nodes': 0},
+    }
+    result = call(runtime, {'action': 'context', 'mode': 'topic', 'query': 'budget'})
+    trace = result['structured']['retrieval_trace']
+    assert trace['item_count_scope'] == 'graph_nodes_and_articles'
+    assert trace['returned_items'] == trace['available_items'] == 1 and trace['omitted_items'] == 0
+    assert result['structured']['budget']['bounded'] is False
+    assert 'Budget details' in result['result']

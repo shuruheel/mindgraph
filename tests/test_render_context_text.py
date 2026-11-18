@@ -14,7 +14,8 @@ def test_server_context_text_is_passed_through():
 def test_server_context_text_respects_the_character_budget():
     raw = {"context_text": "x" * 5000, "graph": {"nodes": [], "edges": []}}
     out = render_context(raw, 1024)
-    assert out.startswith("x" * 1024)
+    assert len(out) == 1024
+    assert out.startswith("x" * 900)
     assert "[truncated to 1024 characters]" in out
 
 

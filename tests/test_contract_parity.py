@@ -90,14 +90,19 @@ def test_every_contract_tool_has_a_handler():
     assert {tool["name"] for tool in _contract()["tools"]} == set(HANDLERS)
 
 
-def test_instructions_include_guidance_after_escaped_backtick_semicolon():
+def test_general_instructions_are_complete_and_exclude_local_adapter_capabilities():
     instructions = _contract()["instructions"]
-    assert "`hybrid`; use `document_index`" in instructions
-    assert "## Comprehensive read tools" in instructions
-    assert "## When to WRITE" in instructions
-    assert "## Tool tips" in instructions
+    assert "`hybrid`; `document_index`" in instructions
+    assert "## Orient, answer, preserve" in instructions
+    assert "## Retrieval" in instructions
+    assert "## Writing" in instructions
+    assert "don't narrate tool use." in instructions
     assert not instructions.endswith("\\")
     assert "mindgraph_code" not in instructions
+    memory = next(tool for tool in _contract()["tools"] if tool['name'] == 'mindgraph_memory')
+    assert memory['parameters']['properties']['action']['enum'] == ['status', 'context']
+    assert 'handle' not in memory['parameters']['properties']
+    assert "action='open'" not in memory['description']
 
 
 @pytest.mark.parametrize("tool", _contract()["tools"], ids=lambda tool: tool["name"])

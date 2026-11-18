@@ -430,7 +430,8 @@ def render_context(response: Any, max_chars: Optional[float] = None) -> Optional
     if isinstance(server_text, str) and server_text:
         budget = render_budget(max_chars)
         if budget is not None and len(server_text) > budget:
-            return f"{server_text[:budget]}\n[truncated to {budget} characters]"
+            marker = f"\n[truncated to {budget} characters]"
+            return server_text[:budget - len(marker)] + marker
         return server_text
     graph = _obj(payload.get("graph")) or {}
     shaped = [n for n in _list(graph.get("nodes")) if _is_node_shaped(n)]

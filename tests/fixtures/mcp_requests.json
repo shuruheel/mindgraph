@@ -1,5 +1,5 @@
 {
-  "mcp_version": "0.27.0",
+  "mcp_version": "0.29.0",
   "base_url": "http://mindgraph.test",
   "agent_id": "hermes",
   "invocation_context": {
@@ -20,7 +20,6 @@
           "path": "/retrieve/context",
           "body": {
             "query": "Kissinger NATO",
-            "chunk_limit": 0,
             "graph_expansion_limit": 3,
             "graph_max_depth": 2,
             "format": "text",
@@ -45,7 +44,6 @@
           "path": "/retrieve/context",
           "body": {
             "query": "board members",
-            "chunk_limit": 0,
             "as_of": "2024-03-01",
             "retrieval_mode": "exhaustive",
             "graph_expansion_limit": 3,
@@ -71,7 +69,6 @@
           "path": "/retrieve/context",
           "body": {
             "query": "q",
-            "chunk_limit": 0,
             "article_limit": 0,
             "graph_expansion_limit": 3,
             "graph_max_depth": 2
@@ -100,6 +97,84 @@
             "graph_max_depth": 2,
             "format": "text",
             "max_tokens": 6000
+          }
+        }
+      ]
+    },
+    {
+      "id": "retrieve_context_no_chunks",
+      "tool": "mindgraph_retrieve",
+      "args": {
+        "action": "context",
+        "query": "q",
+        "include_chunks": false
+      },
+      "requests": [
+        {
+          "method": "POST",
+          "path": "/retrieve/context",
+          "body": {
+            "query": "q",
+            "chunk_limit": 0,
+            "graph_expansion_limit": 3,
+            "graph_max_depth": 2,
+            "format": "text",
+            "max_tokens": 6000
+          }
+        }
+      ]
+    },
+    {
+      "id": "memory_topic_chunks",
+      "tool": "mindgraph_memory",
+      "args": {
+        "action": "context",
+        "mode": "topic",
+        "query": "q",
+        "include_chunks": true,
+        "limit": 4
+      },
+      "requests": [
+        {
+          "method": "POST",
+          "path": "/retrieve/context",
+          "body": {
+            "query": "q",
+            "node_limit": 4,
+            "chunk_limit": 4,
+            "article_limit": 0,
+            "include_graph": true,
+            "graph_expansion_limit": 3,
+            "graph_max_depth": 2,
+            "format": "text",
+            "max_tokens": 2000
+          }
+        }
+      ]
+    },
+    {
+      "id": "memory_topic_no_chunks",
+      "tool": "mindgraph_memory",
+      "args": {
+        "action": "context",
+        "mode": "topic",
+        "query": "q",
+        "include_chunks": false
+      },
+      "requests": [
+        {
+          "method": "POST",
+          "path": "/retrieve/context",
+          "body": {
+            "query": "q",
+            "node_limit": 8,
+            "chunk_limit": 0,
+            "article_limit": 0,
+            "include_graph": true,
+            "graph_expansion_limit": 3,
+            "graph_max_depth": 2,
+            "format": "text",
+            "max_tokens": 2000
           }
         }
       ]
@@ -629,11 +704,12 @@
           "body": {
             "query": "NATO",
             "node_limit": 5,
-            "chunk_limit": 0,
             "article_limit": 0,
             "include_graph": true,
             "graph_expansion_limit": 3,
-            "graph_max_depth": 2
+            "graph_max_depth": 2,
+            "format": "text",
+            "max_tokens": 2000
           }
         }
       ]

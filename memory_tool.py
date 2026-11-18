@@ -377,7 +377,71 @@ def _latest_timestamp(value: Any) -> Optional[str]:
     return latest
 
 
-def _context_warnings(raw: Any, rendered: str, available: int, returned: int) -> list[Rec]:
+def _server_rendering(raw: Any) -> Optional[Rec]:
+    payload = _obj(raw) or {}
+    listed = _obj(payload.get("rendered")) or {}
+    body = payload.get("context_text")
+    if not isinstance(body, str) or not body.strip():
+        return None
+    if not all(isinstance(listed.get(key), list) for key in ("nodes", "articles")):
+        return None
+    return {"text": body, "nodes": [v for v in listed["nodes"] if isinstance(v, str)],
+            "articles": [v for v in listed["articles"] if isinstance(v, str)],
+            "brief_nodes": {v for v in _list(listed.get("brief_nodes")) if isinstance(v, str)}}
+
+
+def _local_topic_payload(raw: Any, include_chunks: bool) -> Any:
+    if not isinstance(raw, dict):
+        return raw
+    result = {k: v for k, v in raw.items() if k not in ("context_text", "used_tokens", "truncated", "omitted")}
+    if not include_chunks:
+        result.pop("chunks", None)
+    return result
+
+
+def _server_items(candidates: list[Rec], served: Rec, rendered: str, cut: bool) -> list[Rec]:
+    by_uid: dict[str, Rec] = {}
+    for item in candidates:
+        if uid := _text(item.get("uid")):
+            by_uid.setdefault(uid, item)
+    seen: set[str] = set()
+    items = []
+    headings: dict[str, list[str]] = {}
+    owners: dict[str, set[str]] = {}
+    if cut:
+        # Canonical text does not embed node UIDs. Count only complete, unique
+        # item headings after a client-side cut, never a label substring in prose
+        # or in a different item's longer label. Ambiguous headings stay uncounted.
+        for uid, item in by_uid.items():
+            label = _text(item.get("label"))
+            if not label or item.get("type") in ("SourceExcerpt", "Relationship"):
+                continue
+            if item.get("type") == "Article":
+                pattern = r"\[article\] " + re.escape(label)
+            else:
+                pattern = (r"(?:\[[^\]\n]+\]\s+)?" + re.escape(item.get("type") or "Node")
+                           + r" — " + re.escape(label)
+                           + r"(?: \(about [^\n]*\)| \[[^\n]*\]| · stated[^\n]*)*")
+            matches = [line for line in served["text"].splitlines() if re.fullmatch(pattern, line.strip())]
+            headings[uid] = matches
+            for line in matches:
+                owners.setdefault(line, set()).add(uid)
+        kept_lines = set(rendered.splitlines())
+    for uid in [*served["nodes"], *served["articles"]]:
+        item = by_uid.get(uid)
+        if item is None or uid in seen:
+            continue
+        seen.add(uid)
+        if cut:
+            matches = headings.get(uid, [])
+            if len(matches) != 1 or owners[matches[0]] != {uid} or matches[0] not in kept_lines:
+                continue
+        items.append({**item, "brief": True} if uid in served["brief_nodes"] else item)
+    return items
+
+
+def _context_warnings(raw: Any, rendered: str, available: int, returned: int,
+                      server_bounded: Optional[bool] = None) -> list[Rec]:
     warnings: list[Rec] = [
         {
             "code": "delivery_unverified",
@@ -385,14 +449,17 @@ def _context_warnings(raw: Any, rendered: str, available: int, returned: int) ->
         }
     ]
     serialized = json.dumps(raw, separators=(",", ":"), default=str)
-    if available > returned or "item(s) omitted" in rendered:
+    bounded = server_bounded if server_bounded is not None else available > returned or "item(s) omitted" in rendered
+    if bounded:
         warnings.append(
             {
                 "code": "context_bounded",
-                "message": f"{max(0, available - returned)} structured item(s) were omitted from the rendered context.",
+                "message": ("Some items were shortened to fit the rendered context's budget."
+                            if server_bounded and available == returned else
+                            f"{max(0, available - returned)} structured item(s) were omitted from the rendered context."),
             }
         )
-    if '"superseded":true' in serialized:
+    if re.search(r'"superseded":(?:true|\{)', serialized):
         warnings.append({"code": "superseded_items_present", "message": "Some retrieved items are superseded."})
     if re.search(r'"currently_valid":false|"valid_at_time":false', serialized):
         warnings.append(
@@ -403,7 +470,7 @@ def _context_warnings(raw: Any, rendered: str, available: int, returned: int) ->
         )
     payload = _obj(raw) or {}
     truncation = _obj(payload.get("truncation"))
-    if payload.get("truncated") is True or (truncation and any(truncation.values())):
+    if (server_bounded is None and payload.get("truncated") is True) or (truncation and any(truncation.values())):
         warnings.append({"code": "source_truncated", "message": "The authoritative source reported truncated fields."})
     if _text(payload.get("warning")):
         warnings.append({"code": "source_warning", "message": payload["warning"]})
@@ -509,6 +576,7 @@ def _handle(rt: Runtime, args: Rec, config: MemoryRuntimeConfig) -> str:
     project_uid = _text(args.get("project_uid"))
 
     brief_unavailable = []
+    served = None
     if mode == "brief":
         brief = _conversation_brief(rt, args, agent_id, budget)
         if brief is None:
@@ -528,7 +596,8 @@ def _handle(rt: Runtime, args: Rec, config: MemoryRuntimeConfig) -> str:
                     "node_limit": limit,
                     "node_types": _strings(args.get("node_types")),
                     "layer": _text(args.get("layer")),
-                    "chunk_limit": limit if args.get("include_chunks") is True else 0,
+                    "chunk_limit": (limit if args.get("include_chunks") is True
+                                    else 0 if args.get("include_chunks") is False else None),
                     "article_limit": limit if args.get("include_documents") is True else 0,
                     "valid_at": _text(args.get("valid_at")),
                     "include_graph": True,
@@ -536,9 +605,14 @@ def _handle(rt: Runtime, args: Rec, config: MemoryRuntimeConfig) -> str:
                     if _number(args.get("graph_expansion_limit")) is not None
                     else 3,
                     "graph_max_depth": args["graph_max_depth"] if _number(args.get("graph_max_depth")) is not None else 2,
+                    "format": "text",
+                    "max_tokens": max(256, budget // 4),
                 }
             ),
         )
+        served = _server_rendering(raw)
+        if served is None:
+            raw = _local_topic_payload(raw, args.get("include_chunks") is True)
         rendered = render_context(raw, budget) or "No results found for this search."
         strategy = "retrieve_context"
         candidates = _topic_candidates(raw)
@@ -560,7 +634,14 @@ def _handle(rt: Runtime, args: Rec, config: MemoryRuntimeConfig) -> str:
         strategy = "resume_work"
         candidates = _resume_candidates(raw)
 
-    items = _visible_items(candidates, rendered)
+    items = (_server_items(candidates, served, rendered, len(served["text"]) > budget)
+             if served is not None else _visible_items(candidates, rendered))
+    # Canonical accounting covers graph nodes and articles. Source passages have
+    # separate server counters and may combine/replace multiple graph assertions.
+    available = (sum(item.get("type") not in ("Relationship", "SourceExcerpt") for item in candidates)
+                 if served else len(candidates))
+    server_bounded = ((raw.get("truncated") is True or len(served["text"]) > budget or available > len(items))
+                      if served else None)
     rendered_hash = _sha256(rendered)
     scope = _defined(
         {
@@ -578,7 +659,7 @@ def _handle(rt: Runtime, args: Rec, config: MemoryRuntimeConfig) -> str:
             {"mode": mode, "scope": scope, "strategy": strategy, "query": query, "rendered_hash": rendered_hash}
         )
     )[:24]
-    omitted = max(0, len(candidates) - len(items))
+    omitted = max(0, available - len(items))
     structured = {
         "schema_version": RESULT_SCHEMA_VERSION,
         "action": "context",
@@ -595,22 +676,26 @@ def _handle(rt: Runtime, args: Rec, config: MemoryRuntimeConfig) -> str:
                 "node_types": _strings(args.get("node_types")),
                 "graph_expansion_limit": args.get("graph_expansion_limit", 3) if mode == "topic" else None,
                 "graph_max_depth": args.get("graph_max_depth", 2) if mode == "topic" else None,
-                "available_items": len(candidates),
+                "available_items": available,
                 "returned_items": len(items),
                 "omitted_items": omitted,
+                "rendering": "server" if served else None,
+                "item_count_scope": "graph_nodes_and_articles" if served else None,
+                "server_omitted": _obj(raw.get("omitted")) if served else None,
             }
         ),
         "budget": {
             "unit": "characters",
             "requested_chars": budget,
             "used_chars": len(rendered),
-            "available_items": len(candidates),
+            "available_items": available,
             "returned_items": len(items),
             "omitted_items": omitted,
-            "bounded": len(candidates) > len(items) or "item(s) omitted" in rendered,
+            "bounded": (server_bounded if server_bounded is not None
+                        else available > len(items) or "item(s) omitted" in rendered),
         },
         "freshness": _defined({"valid_at": _text(args.get("valid_at")), "latest_source_timestamp": _latest_timestamp(raw)}),
-        "warnings": _context_warnings(raw, rendered, len(candidates), len(items)) + ([{
+        "warnings": _context_warnings(raw, rendered, available, len(items), server_bounded) + ([{
             "code": "brief_section_unavailable",
             "message": "Not read, so absent from this brief (not evidence there are none): "
             + ", ".join(brief_unavailable) + ".",
